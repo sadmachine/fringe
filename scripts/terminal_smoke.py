@@ -20,6 +20,12 @@ BINARY = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "target/debu
 CSI = re.compile(r"\x1b\[([0-?]*)([ -/]*)([@-~])")
 
 
+def child_terminal():
+    # Crossterm may query /dev/tty; it must refer to this slave, not our caller.
+    os.setsid()
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+
 class Screen:
     def __init__(self, width=80, height=24):
         self.resize(width, height)
@@ -29,6 +35,7 @@ class Screen:
     def resize(self, width, height):
         self.width, self.height = width, height
         self.rows = [[" "] * width for _ in range(height)]
+        self.visible_rows = [row.copy() for row in self.rows]
         self.x = self.y = 0
 
     def feed(self, data):
@@ -45,6 +52,8 @@ class Screen:
                     self.y, self.x = numbers[0] - 1, (numbers[1] if len(numbers) > 1 else 1) - 1
                 elif command == "J" and values in ("2", "3"):
                     self.rows = [[" "] * self.width for _ in range(self.height)]
+                elif command == "l" and values == "?2026":
+                    self.visible_rows = [row.copy() for row in self.rows]
                 continue
             if self.pending[0] == "\x1b":
                 if len(self.pending) < 2:
@@ -62,10 +71,10 @@ class Screen:
                 self.x += 1
 
     def text(self):
-        return "\n".join("".join(row) for row in self.rows)
+        return "\n".join("".join(row) for row in self.visible_rows)
 
     def board(self):
-        lines = ["".join(row) for row in self.rows]
+        lines = ["".join(row) for row in self.visible_rows]
         board_rows = [i for i, line in enumerate(lines) if "██" in line]
         assert board_rows, self.text()
         top, bottom = min(board_rows), max(board_rows)
@@ -85,6 +94,7 @@ class Game:
             [str(BINARY), "--seed", "42", "--difficulty", "easy"],
             stdin=self.slave, stdout=self.slave, stderr=subprocess.PIPE,
             env={**os.environ, "TERM": "xterm-256color"}, close_fds=True,
+            preexec_fn=child_terminal,
         )
         self.raw = bytearray()
 
@@ -158,6 +168,15 @@ def solution(board):
 
 
 def main():
+    # Fragmented reads must expose only complete synchronized frames.
+    screen = Screen()
+    screen.feed(b"\x1b[?2026h\x1b[2J\x1b[1;1HOLD\x1b[?2026l")
+    assert screen.text().startswith("OLD")
+    screen.feed(b"\x1b[?2026h\x1b[2J\x1b[1;1HNEW")
+    assert screen.text().startswith("OLD"), "a partial frame became visible"
+    screen.feed(b"\x1b[?2026l")
+    assert screen.text().startswith("NEW")
+
     for args, expected_code in [(["--help"], 0), (["--seed", "-1"], 1), (["--difficulty", "bad"], 1), ([], 1)]:
         result = subprocess.run([str(BINARY), *args], stdin=subprocess.DEVNULL, capture_output=True)
         assert result.returncode == expected_code

@@ -58,7 +58,7 @@
 - [x] Add crossterm RAII lifecycle and rendering with two-column cells. Limit per-frame catch-up and discard time on pause/resize. Fit every board at 80x24 and suspend smaller terminals. Validate CLI seed/difficulty before TTY setup.
 - [x] Add a PTY smoke script that starts a seeded game, selects a difficulty, moves, pauses, retries, generates another stage, shrinks/restores the terminal, and quits. Assert screen responses and restored termios; also exercise Ctrl-C.
 - [x] Add usage documentation and a Linux/macOS CI matrix running format, lint, tests, release build, and PTY checks.
-- [ ] Run `rtk cargo test`, release build, formatting and lint checks, then `rtk proxy python3 scripts/terminal_smoke.py`. Obtain one fresh whole-change review, fix material findings, rerun affected checks, and commit.
+- [x] Run `rtk cargo test`, release build, formatting and lint checks, then `rtk proxy python3 scripts/terminal_smoke.py`. Obtain one fresh whole-change review, fix material findings, rerun affected checks, and commit.
 
 ## Execution record
 
@@ -68,3 +68,6 @@
 - Task 1 complete: six movement tests observed failing against skeletons, then passing. Commit b66ebf0.
 - Task 2 complete: solver/family/budget tests observed failing against skeletons, then passing. The independent batch caught a connector ray leaving its room when facing a solid piece edge; connectors now carve bounded shortest paths to a floor inside each neighbor. All 300 seeds per batch pass, including exact replay and actual Game completion.
 - Task 3 implementation verified: 19 Rust tests pass, including the 300-seed independent batch; release build succeeds with Rust 1.75; current stable formatting and strict Clippy pass. The release executable passes the PTY acceptance script. macOS execution is delegated to the configured CI matrix and has not run locally.
+- Final independent review found two important terminal issues, both reproduced and fixed. Explicit event-boundary clock resets now discard elapsed time even when pause/resume or shrink/restore arrive in one event batch, and when replacing a stage. Three regression tests failed before the fix and pass afterward.
+- The PTY acceptance child now owns its own session and controlling terminal. The original script failed when launched with a controlling terminal; the corrected script passes both with and without one. Its screen reader also commits only complete synchronized frames; an added fragmented-frame check failed before this correction and passes afterward.
+- Final verification: 22 Rust tests pass (including the 300-stage seeded batch), strict Clippy and formatting pass, Rust 1.75 release build succeeds, and release PTY acceptance passes in both launch environments. Review set aside subjective tuning and cross-version seed compatibility as documented scope choices; native macOS execution remains unavailable locally. All material review findings addressed. Work retained on `feat/random-stages`; no push or merge requested.

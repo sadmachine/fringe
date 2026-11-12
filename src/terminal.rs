@@ -67,21 +67,7 @@ pub fn run(app: &mut App) -> io::Result<()> {
         }
         if event::poll(Duration::from_millis(8))? {
             for _ in 0..32 {
-                match event::read()? {
-                    Event::Resize(width, height) => {
-                        size = (width, height);
-                        dirty = true;
-                    }
-                    Event::Key(key) if key.kind != KeyEventKind::Release => {
-                        if let Some(action) = action(key) {
-                            if fits(size) || matches!(action, Action::Quit) {
-                                app.handle(action);
-                                dirty = true;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+                dirty |= handle_event(app, &mut clock, &mut size, event::read()?);
                 if !event::poll(Duration::ZERO)? {
                     break;
                 }
@@ -98,6 +84,30 @@ pub fn run(app: &mut App) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+fn handle_event(app: &mut App, clock: &mut Clock, size: &mut (u16, u16), event: Event) -> bool {
+    match event {
+        Event::Resize(width, height) => {
+            *size = (width, height);
+            *clock = Clock::default();
+            true
+        }
+        Event::Key(key) if key.kind != KeyEventKind::Release => {
+            if let Some(action) = action(key) {
+                if fits(*size) || matches!(action, Action::Quit) {
+                    // Reset at the event boundary; a batch may pause and resume before a tick.
+                    if !matches!(action, Action::Move(_)) {
+                        *clock = Clock::default();
+                    }
+                    app.handle(action);
+                    return true;
+                }
+            }
+            false
+        }
+        _ => false,
+    }
 }
 
 pub fn fits(size: (u16, u16)) -> bool {
@@ -157,6 +167,61 @@ impl Clock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn active_clock() -> Clock {
+        let mut clock = Clock::default();
+        clock.advance(Duration::ZERO, true);
+        clock.advance(Duration::from_millis(39), true);
+        clock
+    }
+
+    #[test]
+    fn pause_resume_in_one_event_batch_discards_elapsed_time() {
+        let mut app = App::new(42, Difficulty::Easy);
+        app.handle(Action::Start);
+        let mut clock = active_clock();
+        let mut size = MIN_SIZE;
+        for _ in 0..2 {
+            handle_event(
+                &mut app,
+                &mut clock,
+                &mut size,
+                Event::Key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE)),
+            );
+        }
+        assert!(app.running());
+        assert_eq!(clock.advance(Duration::from_millis(150), true), 0);
+        assert_eq!(clock.advance(Duration::from_millis(39), true), 0);
+        assert_eq!(clock.advance(Duration::from_millis(1), true), 1);
+    }
+
+    #[test]
+    fn resize_round_trip_in_one_event_batch_discards_elapsed_time() {
+        let mut app = App::new(42, Difficulty::Easy);
+        app.handle(Action::Start);
+        let mut clock = active_clock();
+        let mut size = MIN_SIZE;
+        handle_event(&mut app, &mut clock, &mut size, Event::Resize(40, 12));
+        handle_event(&mut app, &mut clock, &mut size, Event::Resize(80, 24));
+        assert_eq!(size, MIN_SIZE);
+        assert_eq!(clock.advance(Duration::from_millis(150), true), 0);
+    }
+
+    #[test]
+    fn replacing_a_stage_discards_previous_elapsed_time() {
+        let mut app = App::new(42, Difficulty::Easy);
+        app.handle(Action::Start);
+        let mut clock = active_clock();
+        let mut size = MIN_SIZE;
+        handle_event(
+            &mut app,
+            &mut clock,
+            &mut size,
+            Event::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)),
+        );
+        assert_eq!(app.seed, 43);
+        assert_eq!(clock.advance(Duration::from_millis(150), true), 0);
+    }
+
     #[test]
     fn pause_and_resize_discard_time_and_stalls_have_bounded_catch_up() {
         let mut clock = Clock::default();
