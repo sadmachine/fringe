@@ -1,0 +1,20 @@
+src/render.rs
+  s_182b57d57fb830::t_920f33b5bb32c9 40-43,53-56,66-67,84-91,96-98,110-114,240,242,246,248,251,261,279-280
+  s_182b57d57fb830::t_d7155f59ee9b63 44-52,57-65,92-95,99-109,262-265,268-278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "37ba9abdaa440a3ca9c95006b5872702b591b7fa",
+  "prompts": {},
+  "sessions": {
+    "s_182b57d57fb830": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d01c-c0d8-7cd2-92c9-53e9b6a3ea51",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Fishbaugh <github.sadmachine@gmail.com>"
+    }
+  }
+}
