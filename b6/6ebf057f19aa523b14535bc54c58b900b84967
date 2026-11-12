@@ -1,0 +1,32 @@
+src/model.rs
+  s_182b57d57fb830::t_c3e407a471880e 1-32,49-65,89-168
+  s_182b57d57fb830::t_7e2aaf0b51aa38 33-48,66-88
+docs/superpowers/specs/2026-11-12-terminal-maze-design.md
+  s_182b57d57fb830::t_c3e407a471880e 3
+docs/superpowers/plans/2026-11-12-random-stages.md
+  s_182b57d57fb830::t_c3e407a471880e 1-67
+src/lib.rs
+  s_182b57d57fb830::t_c3e407a471880e 1
+.gitignore
+  s_182b57d57fb830::t_c3e407a471880e 1-2
+Cargo.toml
+  s_182b57d57fb830::t_c3e407a471880e 1-12
+Cargo.lock
+  s_182b57d57fb830::t_ab765f7a65491d 1-381
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b66ebf057f19aa523b14535bc54c58b900b84967",
+  "prompts": {},
+  "sessions": {
+    "s_182b57d57fb830": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d01c-c0d8-7cd2-92c9-53e9b6a3ea51",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Fishbaugh <github.sadmachine@gmail.com>"
+    }
+  }
+}
