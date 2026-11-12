@@ -70,4 +70,5 @@ The Rust tests check movement, solver edge cases, playable piece geometry, par a
 - `src/app.rs` owns menu and stage flow independently of the terminal.
 - `src/terminal.rs` owns terminal lifecycle, input, resize handling, and simulation timing. `src/render.rs` draws screens.
 
-This version implements random stages. Endless play and a fixed campaign are future work.
+This version implements random stages. See [planned features](docs/planned-features.md)
+for endless mode, a fixed campaign, better hazards, and powerups.
