@@ -37,6 +37,34 @@ const MUTED: Color = Color::Rgb {
     g: 142,
     b: 168,
 };
+const PLAYER_STYLE: (Color, Color, &str) = (BACKGROUND, GOLD, "oo");
+
+fn tile_style(tile: Tile) -> (Color, Color, &'static str) {
+    match tile {
+        Tile::Wall => (
+            Color::Rgb {
+                r: 82,
+                g: 77,
+                b: 204,
+            },
+            BACKGROUND,
+            "██",
+        ),
+        Tile::Floor => (BACKGROUND, BACKGROUND, "  "),
+        Tile::Dot => (CYAN, BACKGROUND, ". "),
+        Tile::Coin => (GOLD, BACKGROUND, "$ "),
+        Tile::Spike => (PINK, BACKGROUND, "/\\"),
+        Tile::Exit => (
+            CYAN,
+            Color::Rgb {
+                r: 15,
+                g: 53,
+                b: 61,
+            },
+            "<>",
+        ),
+    }
+}
 
 fn center(out: &mut impl Write, width: u16, y: u16, color: Color, text: &str) -> io::Result<()> {
     let text: String = text
@@ -51,6 +79,37 @@ fn center(out: &mut impl Write, width: u16, y: u16, color: Color, text: &str) ->
         SetBackgroundColor(BACKGROUND),
         Print(text)
     )
+}
+
+fn legend(out: &mut impl Write, width: u16, y: u16) -> io::Result<()> {
+    let entries = [
+        (PLAYER_STYLE, " you"),
+        (tile_style(Tile::Dot), "dot +1"),
+        (tile_style(Tile::Coin), "coin +10"),
+        (tile_style(Tile::Spike), " spikes"),
+        (tile_style(Tile::Exit), " exit"),
+    ];
+    let length = entries
+        .iter()
+        .map(|((_, _, glyph), label)| glyph.len() + label.len())
+        .sum::<usize>()
+        + (entries.len() - 1) * 3;
+    queue!(out, MoveTo(width.saturating_sub(length as u16) / 2, y))?;
+    for (index, ((fg, bg, glyph), label)) in entries.into_iter().enumerate() {
+        if index > 0 {
+            queue!(out, Print("   "))?;
+        }
+        queue!(
+            out,
+            SetForegroundColor(fg),
+            SetBackgroundColor(bg),
+            Print(glyph),
+            SetForegroundColor(MUTED),
+            SetBackgroundColor(BACKGROUND),
+            Print(label)
+        )?;
+    }
+    Ok(())
 }
 
 pub fn draw(out: &mut impl Write, app: &App, size: (u16, u16)) -> io::Result<()> {
@@ -178,40 +237,18 @@ pub fn draw(out: &mut impl Write, app: &App, size: (u16, u16)) -> io::Result<()>
                     for x in 0..game.board.width {
                         let pos = Pos { x, y };
                         let (fg, bg, glyph) = if game.player == pos {
+                            let (fg, bg, glyph) = PLAYER_STYLE;
                             (
-                                BACKGROUND,
+                                fg,
                                 if game.outcome == Outcome::Died {
                                     PINK
                                 } else {
-                                    GOLD
+                                    bg
                                 },
-                                "oo",
+                                glyph,
                             )
                         } else {
-                            match game.board.get(pos) {
-                                Tile::Wall => (
-                                    Color::Rgb {
-                                        r: 82,
-                                        g: 77,
-                                        b: 204,
-                                    },
-                                    BACKGROUND,
-                                    "██",
-                                ),
-                                Tile::Floor => (BACKGROUND, BACKGROUND, "  "),
-                                Tile::Dot => (CYAN, BACKGROUND, ". "),
-                                Tile::Coin => (GOLD, BACKGROUND, "$ "),
-                                Tile::Spike => (PINK, BACKGROUND, "/\\"),
-                                Tile::Exit => (
-                                    CYAN,
-                                    Color::Rgb {
-                                        r: 15,
-                                        g: 53,
-                                        b: 61,
-                                    },
-                                    "<>",
-                                ),
-                            }
+                            tile_style(game.board.get(pos))
                         };
                         queue!(
                             out,
@@ -221,19 +258,26 @@ pub fn draw(out: &mut impl Write, app: &App, size: (u16, u16)) -> io::Result<()>
                         )?;
                     }
                 }
-                let (color, message) = match game.outcome {
-                    Outcome::Cleared => (
+                match game.outcome {
+                    Outcome::Cleared => center(
+                        out,
+                        width,
+                        top + 21,
                         GOLD,
                         "STAGE CLEAR!  Enter / N next seed   R replay   M menu",
-                    ),
-                    Outcome::Died => (PINK, "SPIKED!  R retry   N next seed   M menu"),
-                    Outcome::Playing if run.paused => (GOLD, "PAUSED  P / Space resumes"),
-                    Outcome::Playing => (
-                        MUTED,
-                        "oo you   . dot +1   $ coin +10   /\\ spikes   <> exit",
-                    ),
-                };
-                center(out, width, top + 21, color, message)?;
+                    )?,
+                    Outcome::Died => center(
+                        out,
+                        width,
+                        top + 21,
+                        PINK,
+                        "SPIKED!  R retry   N next seed   M menu",
+                    )?,
+                    Outcome::Playing if run.paused => {
+                        center(out, width, top + 21, GOLD, "PAUSED  P / Space resumes")?
+                    }
+                    Outcome::Playing => legend(out, width, top + 21)?,
+                }
                 center(
                     out,
                     width,
