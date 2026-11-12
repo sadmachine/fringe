@@ -16,6 +16,8 @@ Linux and macOS are the targets. Use an interactive terminal with at least 80 co
 
 Choose easy, normal, or hard with the arrows or `1`, `2`, `3`, then press Enter. Difficulty changes the board size, minimum solution length, and spike placement. Every accepted stage has a safe exit. Collecting every reward is optional, and the par shown is the shortest safe route in slides.
 
+Easy uses two pieces; normal and hard use four, with larger interiors on hard. The start and exit are separated by at least half the interior width and height. Generation rejects layouts where less than three quarters of any piece is usable, then turns small unplayable pockets into solid walls. Every remaining floor cell lies on a safe route that can still reach the exit, including after spike placement. Decorative space is wall rather than empty corridors.
+
 | Key | Action |
 | --- | --- |
 | Arrows, WASD, HJKL | Slide; directions entered during a slide are ignored |
@@ -50,7 +52,7 @@ cargo build --release --locked
 python3 scripts/terminal_smoke.py target/release/fringe
 ```
 
-The Rust tests check movement, solver edge cases, piece variation, and 100 seeds at each difficulty. An independent test solver verifies the final boards and safe reward placement, then plays every solution through the game model. The Python script uses only the standard library and drives the real executable in a pseudo-terminal, including winning a stage, replay, pause, resize, quit, and terminal restoration. CI runs these checks on Linux and macOS.
+The Rust tests check movement, solver edge cases, playable piece geometry, and 100 seeds at each difficulty. An independent test solver verifies the final boards, every floor cell's usability, start/exit separation, and safe reward placement, then plays every solution through the game model. The Python script uses only the standard library and drives the real executable in a pseudo-terminal, including winning a stage, replay, pause, resize, quit, and terminal restoration. CI runs these checks on Linux and macOS.
 
 ## Code
 

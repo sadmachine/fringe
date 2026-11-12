@@ -145,3 +145,34 @@ fn seeded_stages_are_solvable_reproducible_and_fit_the_terminal() {
         }
     }
 }
+
+#[test]
+fn stages_use_the_assembled_map_and_separate_start_from_exit() {
+    for difficulty in Difficulty::ALL {
+        for seed in 0..100 {
+            let stage = generate(seed, difficulty).unwrap_or_else(|e| panic!("{e}"));
+            let (_, safe) = verify(&stage.board, stage.start);
+            let mut exit = None;
+            let mut unusable = Vec::new();
+            for y in 0..stage.board.height {
+                for x in 0..stage.board.width {
+                    let pos = Pos { x, y };
+                    match stage.board.get(pos) {
+                        Tile::Exit => exit = Some(pos),
+                        Tile::Floor | Tile::Dot | Tile::Coin
+                            if pos != stage.start && !safe.contains(&pos) =>
+                        {
+                            unusable.push(pos)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            assert!(unusable.is_empty(), "{difficulty} seed {seed}: {} floor cells are outside safe winning routes, including {:?}", unusable.len(), &unusable[..unusable.len().min(5)]);
+            let exit = exit.unwrap();
+            assert!(stage.start.x.abs_diff(exit.x) * 2 >= stage.board.width - 2
+                && stage.start.y.abs_diff(exit.y) * 2 >= stage.board.height - 2,
+                "{difficulty} seed {seed}: start {:?} and exit {exit:?} occupy one corner of a {}x{} map", stage.start, stage.board.width, stage.board.height);
+        }
+    }
+}

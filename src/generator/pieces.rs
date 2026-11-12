@@ -1,4 +1,4 @@
-use crate::model::{Board, Pos, Tile};
+use crate::model::{Board, Direction, Pos, Step, Tile};
 use rand::Rng;
 
 #[derive(Clone, Copy, Debug)]
@@ -19,17 +19,38 @@ pub(super) fn make(width: usize, height: usize, family: Family, rng: &mut impl R
     match family {
         Family::Switchback => {
             let first_right = rng.gen_bool(0.5);
-            for y in (0..h).step_by(2) {
-                for x in 0..w {
-                    base.set(Pos { x, y }, Tile::Floor);
-                }
-                if y + 2 < h {
-                    let right = (y / 2 % 2 == 0) == first_right;
-                    let x = if right {
+            let lanes = h.div_ceil(2);
+            let turns: Vec<_> = (0..lanes - 1)
+                .map(|lane| {
+                    if (lane % 2 == 0) == first_right {
                         rng.gen_range(w - 2..w)
                     } else {
                         rng.gen_range(0..2)
-                    };
+                    }
+                })
+                .collect();
+            for lane in 0..lanes {
+                let mut left = rng.gen_range(0..2);
+                let mut right = rng.gen_range(w - 2..w);
+                // Both passages end at their shared bend, so the player can stop and turn.
+                for &turn in [
+                    lane.checked_sub(1).and_then(|i| turns.get(i)),
+                    turns.get(lane),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if turn < w / 2 {
+                        left = turn;
+                    } else {
+                        right = turn;
+                    }
+                }
+                let y = lane * 2;
+                for x in left..=right {
+                    base.set(Pos { x, y }, Tile::Floor);
+                }
+                if let Some(&x) = turns.get(lane) {
                     base.set(Pos { x, y: y + 1 }, Tile::Floor);
                 }
             }
@@ -49,12 +70,42 @@ pub(super) fn make(width: usize, height: usize, family: Family, rng: &mut impl R
         }
         Family::Chamber => {
             base.tiles.fill(Tile::Floor);
-            // Pillars never touch the perimeter, preserving a connected ring.
-            for y in (1..h - 1).step_by(2) {
-                let x = rng.gen_range(1..w - 1);
+            // Staggered edge pillars provide stopping points to enter the interior lanes.
+            let horizontal_phase = rng.gen_range(0..2);
+            let vertical_phase = rng.gen_range(0..2);
+            for x in (1..w - 1).step_by(2) {
+                let y = if x / 2 % 2 == horizontal_phase {
+                    0
+                } else {
+                    h - 1
+                };
                 base.set(Pos { x, y }, Tile::Wall);
-                if rng.gen_bool(0.5) && x + 1 < w - 1 {
-                    base.set(Pos { x: x + 1, y }, Tile::Wall);
+            }
+            for y in (1..h - 1).step_by(2) {
+                let x = if y / 2 % 2 == vertical_phase {
+                    0
+                } else {
+                    w - 1
+                };
+                base.set(Pos { x, y }, Tile::Wall);
+                for x in (1..w - 1).step_by(2) {
+                    if rng.gen_bool(0.85) {
+                        base.set(Pos { x, y }, Tile::Wall);
+                    }
+                }
+            }
+            // Opposing edge pillars can enclose a single corner cell; keep it solid.
+            for pos in [
+                Pos { x: 0, y: 0 },
+                Pos { x: w - 1, y: 0 },
+                Pos { x: 0, y: h - 1 },
+                Pos { x: w - 1, y: h - 1 },
+            ] {
+                if Direction::ALL
+                    .into_iter()
+                    .all(|direction| base.step(pos, direction) == Step::Blocked)
+                {
+                    base.set(pos, Tile::Wall);
                 }
             }
         }
@@ -84,6 +135,44 @@ mod tests {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
     use std::collections::{HashSet, VecDeque};
+
+    #[test]
+    fn switchback_turns_are_reachable_from_wall_stops() {
+        for seed in 0..20 {
+            let board = make(
+                9,
+                7,
+                Family::Switchback,
+                &mut ChaCha8Rng::seed_from_u64(seed),
+            );
+            let floors: Vec<_> = (0..7)
+                .flat_map(|y| (0..9).map(move |x| Pos { x, y }))
+                .filter(|p| board.get(*p) == Tile::Floor)
+                .collect();
+            let reached = super::super::solver::analyze(&board, floors[0]);
+            assert_eq!(
+                reached.distances.iter().filter(|d| d.is_some()).count(),
+                floors.len(),
+                "seed {seed}: a bend needs a wall to stop the slide"
+            );
+        }
+    }
+
+    #[test]
+    fn chamber_pillars_provide_access_to_the_interior() {
+        for seed in 0..20 {
+            let board = make(9, 7, Family::Chamber, &mut ChaCha8Rng::seed_from_u64(seed));
+            let floors: Vec<_> = (0..7)
+                .flat_map(|y| (0..9).map(move |x| Pos { x, y }))
+                .filter(|p| board.get(*p) == Tile::Floor)
+                .collect();
+            let reached = super::super::solver::analyze(&board, floors[0]);
+            assert!(
+                reached.distances.iter().filter(|d| d.is_some()).count() * 4 >= floors.len() * 3,
+                "seed {seed}: open space inside a chamber must be playable"
+            );
+        }
+    }
 
     #[test]
     fn every_family_varies_and_remains_physically_connected() {

@@ -4,7 +4,7 @@ mod solver;
 use crate::model::{Board, Pos, Tile};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Difficulty {
@@ -20,6 +20,14 @@ impl Difficulty {
             Self::Easy => 3..=6,
             Self::Normal => 7..=11,
             Self::Hard => 12..=24,
+        }
+    }
+
+    fn room_layout(self) -> (usize, usize, usize, usize) {
+        match self {
+            Self::Easy => (2, 1, 7, 5),
+            Self::Normal => (2, 2, 7, 5),
+            Self::Hard => (2, 2, 9, 7),
         }
     }
 }
@@ -66,84 +74,125 @@ fn generate_with_budget(
 ) -> Result<Stage, String> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     for _ in 0..attempts {
-        let mut board = assemble(difficulty, &mut rng);
+        let assembled = assemble(difficulty, &mut rng);
+        let board = &assembled;
         let mut floors: Vec<_> = (0..board.height)
             .flat_map(|y| (0..board.width).map(move |x| Pos { x, y }))
             .filter(|p| board.get(*p) == Tile::Floor)
             .collect();
         floors.shuffle(&mut rng);
         for start in floors.iter().take(12).copied() {
-            let analysis = solver::analyze(&board, start);
+            let analysis = solver::analyze(board, start);
+            let reachable: HashSet<_> = floors
+                .iter()
+                .copied()
+                .filter(|p| analysis.distances[p.y * board.width + p.x].is_some())
+                .collect();
+            if !useful_rooms(board, &reachable, difficulty) {
+                continue;
+            }
             let exits: Vec<_> = floors
                 .iter()
                 .copied()
                 .filter(|p| {
-                    analysis.distances[p.y * board.width + p.x]
-                        .is_some_and(|d| difficulty.slide_range().contains(&d))
+                    start.x.abs_diff(p.x) * 2 >= board.width - 2
+                        && start.y.abs_diff(p.y) * 2 >= board.height - 2
+                        && analysis.distances[p.y * board.width + p.x]
+                            .is_some_and(|d| difficulty.slide_range().contains(&d))
                 })
                 .collect();
-            let Some(exit) = exits.choose(&mut rng).copied() else {
-                continue;
-            };
-            board.set(exit, Tile::Exit);
-            let spike_target = match difficulty {
-                Difficulty::Easy => 1,
-                Difficulty::Normal => 4,
-                Difficulty::Hard => 9,
-            };
-            let mut placed = 0;
-            for candidate in floors
-                .iter()
-                .filter(|p| **p != start && **p != exit)
-                .take(spike_target * 5)
-            {
-                board.set(*candidate, Tile::Spike);
-                let check = solver::analyze(&board, start);
-                if check
-                    .solution
-                    .as_ref()
-                    .is_some_and(|p| difficulty.slide_range().contains(&p.len()))
-                {
-                    placed += 1;
-                } else {
-                    board.set(*candidate, Tile::Floor);
+            for exit in exits.into_iter().take(8) {
+                let mut board = assembled.clone();
+                board.set(exit, Tile::Exit);
+                let reachable = solver::analyze(&board, start);
+                if !useful_rooms(&board, &reachable.safe_cells, difficulty) {
+                    continue;
                 }
-                if placed == spike_target {
-                    break;
-                }
-            }
-            let verified = solver::analyze(&board, start);
-            let Some(path) = verified.solution else {
-                break;
-            };
-            if !difficulty.slide_range().contains(&path.len()) {
-                break;
-            }
-            // Iterate in board order, never HashSet order, to preserve seeded replay.
-            let mut reward_number = rng.gen_range(0..10);
-            for y in 1..board.height - 1 {
-                for x in 1..board.width - 1 {
-                    let pos = Pos { x, y };
-                    if pos != start && verified.safe_cells.contains(&pos) {
-                        board.set(
-                            pos,
-                            if reward_number % 11 == 0 {
-                                Tile::Coin
-                            } else {
-                                Tile::Dot
-                            },
-                        );
-                        reward_number += 1;
+                // Small unplayable pockets become solid decoration. Reject whole unused rooms above.
+                for pos in &floors {
+                    if board.get(*pos) == Tile::Floor && !reachable.safe_cells.contains(pos) {
+                        board.set(*pos, Tile::Wall);
                     }
                 }
+                let check = solver::analyze(&board, start);
+                if !check
+                    .solution
+                    .as_ref()
+                    .is_some_and(|path| difficulty.slide_range().contains(&path.len()))
+                {
+                    continue;
+                }
+                let spike_target = match difficulty {
+                    Difficulty::Easy => 1,
+                    Difficulty::Normal => 4,
+                    Difficulty::Hard => 9,
+                };
+                let mut placed = 0;
+                for candidate in floors
+                    .iter()
+                    .filter(|p| **p != start && **p != exit)
+                    .take(spike_target * 5)
+                {
+                    if board.get(*candidate) != Tile::Floor {
+                        continue;
+                    }
+                    board.set(*candidate, Tile::Spike);
+                    let check = solver::analyze(&board, start);
+                    if check
+                        .solution
+                        .as_ref()
+                        .is_some_and(|p| difficulty.slide_range().contains(&p.len()))
+                        && floors
+                            .iter()
+                            .all(|p| board.get(*p) != Tile::Floor || check.safe_cells.contains(p))
+                    {
+                        placed += 1;
+                    } else {
+                        board.set(*candidate, Tile::Floor);
+                    }
+                    if placed == spike_target {
+                        break;
+                    }
+                }
+                let verified = solver::analyze(&board, start);
+                let Some(path) = verified.solution else {
+                    continue;
+                };
+                if !difficulty.slide_range().contains(&path.len()) {
+                    continue;
+                }
+                if floors
+                    .iter()
+                    .any(|p| board.get(*p) == Tile::Floor && !verified.safe_cells.contains(p))
+                {
+                    continue;
+                }
+                // Iterate in board order, never HashSet order, to preserve seeded replay.
+                let mut reward_number = rng.gen_range(0..10);
+                for y in 1..board.height - 1 {
+                    for x in 1..board.width - 1 {
+                        let pos = Pos { x, y };
+                        if pos != start && verified.safe_cells.contains(&pos) {
+                            board.set(
+                                pos,
+                                if reward_number % 11 == 0 {
+                                    Tile::Coin
+                                } else {
+                                    Tile::Dot
+                                },
+                            );
+                            reward_number += 1;
+                        }
+                    }
+                }
+                return Ok(Stage {
+                    board,
+                    start,
+                    seed,
+                    difficulty,
+                    par: path.len(),
+                });
             }
-            return Ok(Stage {
-                board,
-                start,
-                seed,
-                difficulty,
-                par: path.len(),
-            });
         }
     }
     Err(format!(
@@ -151,13 +200,32 @@ fn generate_with_budget(
     ))
 }
 
+fn useful_rooms(board: &Board, reachable: &HashSet<Pos>, difficulty: Difficulty) -> bool {
+    let (columns, rows, room_w, room_h) = difficulty.room_layout();
+    for row in 0..rows {
+        for column in 0..columns {
+            let mut total = 0;
+            let mut usable = 0;
+            for y in 1 + row * (room_h + 1)..1 + row * (room_h + 1) + room_h {
+                for x in 1 + column * (room_w + 1)..1 + column * (room_w + 1) + room_w {
+                    let pos = Pos { x, y };
+                    if board.get(pos) == Tile::Floor {
+                        total += 1;
+                        usable += usize::from(reachable.contains(&pos));
+                    }
+                }
+            }
+            if total == 0 || usable * 4 < total * 3 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn assemble(difficulty: Difficulty, rng: &mut impl Rng) -> Board {
     use pieces::Family;
-    let (columns, rows, room_w, room_h) = match difficulty {
-        Difficulty::Easy => (2, 2, 7, 5),
-        Difficulty::Normal => (3, 2, 7, 5),
-        Difficulty::Hard => (3, 2, 9, 7),
-    };
+    let (columns, rows, room_w, room_h) = difficulty.room_layout();
     let width = columns * (room_w + 1) + 1;
     let height = rows * (room_h + 1) + 1;
     let mut board = Board::filled(width, height, Tile::Wall);
@@ -246,6 +314,34 @@ fn connect(board: &mut Board, port: Pos, (dx, dy): (isize, isize), room_w: usize
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn useful_rooms_rejects_a_missing_section_but_allows_small_pockets() {
+        let mut board = Board::filled(17, 13, Tile::Wall);
+        let mut floors = HashSet::new();
+        for top in [1, 7] {
+            for left in [1, 9] {
+                for y in top..top + 5 {
+                    for x in left..left + 7 {
+                        let pos = Pos { x, y };
+                        board.set(pos, Tile::Floor);
+                        floors.insert(pos);
+                    }
+                }
+            }
+        }
+        let mut reachable = floors.clone();
+        reachable.retain(|p| p.x >= 9 || p.y >= 7);
+        assert!(!useful_rooms(&board, &reachable, Difficulty::Normal));
+        for pos in [
+            Pos { x: 1, y: 1 },
+            Pos { x: 9, y: 1 },
+            Pos { x: 1, y: 7 },
+            Pos { x: 9, y: 7 },
+        ] {
+            floors.remove(&pos);
+        }
+        assert!(useful_rooms(&board, &floors, Difficulty::Normal));
+    }
     #[test]
     fn exhausted_budget_returns_replayable_error() {
         let error = generate_with_budget(42, Difficulty::Hard, 0).unwrap_err();
