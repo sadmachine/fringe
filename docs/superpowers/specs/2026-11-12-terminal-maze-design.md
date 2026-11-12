@@ -1,6 +1,6 @@
 # Fringe: procedural terminal maze stages
 
-Status: proposed design, awaiting user approval before implementation.
+Status: approved by the user on 2026-11-12; implementation authorized.
 
 ## Intent
 
@@ -88,3 +88,11 @@ Endless play, fixed campaigns, persistence, online features, upgrades, shops, mo
 ## Builder discretion
 
 Choose module filenames, exact colors and glyphs, per-cell slide cadence, key aliases outside the primary controls, piece generation algorithms, connection placement, safe seed parsing, and measured difficulty thresholds. Prefer the smallest complete implementation that satisfies the rules and proof above. Changes to the agreed mode order, movement rules, or piece-based generation require revisiting the design.
+
+## Playtest correction: map usefulness
+
+The user reported that a nearby exit and inaccessible, empty pieces defeated the purpose of assembling a full maze. A safe exit alone is insufficient. The corrected generator must retain useful space in every piece, separate start and exit across the board, and leave every floor cell on a safe winning route. Reject candidates where less than three quarters of any piece is usable; convert the remaining small unusable pockets to walls. Hazard placement must preserve all remaining floor cells' usability. Easy uses two pieces, normal four smaller pieces, and hard four larger pieces, keeping the established slide-count ranges. Switchback bends must coincide with wall stops, and chamber geometry must provide stops that admit slides into the interior.
+
+## Objective minimums and pars
+
+The user requested both ANY% and 100% targets, then clarified that each should show a forgiving par and an exact minimum. ANY% minimizes safe slides to the exit; 100% minimizes safe slides collecting every dot and coin before exiting. Par is derived from each minimum by adding a 25% allowance, rounded up, with at least two extra slides. Group values by objective, emphasizing par in bright color and showing minimum as secondary information. The exit still ends the run on entry, so generation must prove that all rewards can be collected in one run, rather than merely proving their individual reachability. Full-collection verification uses a bounded exact search and retries unproved candidates. Difficulty ranges continue to apply to the ANY% minimum.
