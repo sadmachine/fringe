@@ -1,0 +1,49 @@
+Cargo.toml
+  s_182b57d57fb830::t_17c3d54c988c7b 13-16
+README.md
+  s_182b57d57fb830::t_17c3d54c988c7b 17-22,60
+docs/superpowers/specs/2026-11-12-terminal-maze-design.md
+  s_182b57d57fb830::t_17c3d54c988c7b 95-98
+docs/superpowers/plans/2026-11-12-dual-pars.md
+  s_182b57d57fb830::t_da36b72402821a 1-14
+  s_182b57d57fb830::t_d314c8b426148a 15-25
+  s_182b57d57fb830::t_a0d446be042148 26-27
+src/generator/solver.rs
+  s_182b57d57fb830::t_ddbd81154ea6b7 2,36-39,43-48,52,56-59,63,72-76,80-81,85,91-92,103-104,110,116-120,127-130,135-140,153,159-165
+  s_182b57d57fb830::t_976aa923082eae 150-152
+  s_182b57d57fb830::t_da36b72402821a 8-18,23,181,245-250,265-266,268,279,298-299,308-319,329-331,335-337,343-352,357-360,375-379,384-390,404
+  s_182b57d57fb830::t_bef9d70bc3eab2 399
+  s_182b57d57fb830::t_ee3a1b15d9491e 19-22,24-35,40-42,49-51,53-55,60-62,64-71,77-79,82-84,86-90,93-102,105-109,111-115,121-126,131-134,141-149,154-158,166-168,218-223,269-270,320-328,332-334,338-342,353-356,361-374,380-383,391-398,400-403
+  s_182b57d57fb830::t_2a3b4ed21d08f0 405
+tests/generation.rs
+  s_182b57d57fb830::t_7c1e4c55724edb 160-161
+  s_182b57d57fb830::t_ee3a1b15d9491e 98-99,101-107,116-120,122-128,131-133
+  s_182b57d57fb830::t_a4850bbf05daab 95-97,100,108-115,121,129-130,134-138
+  s_182b57d57fb830::t_19bb0d423e0f02 94
+src/render.rs
+  s_182b57d57fb830::t_7c1e4c55724edb 146
+  s_182b57d57fb830::t_ee3a1b15d9491e 147-150
+scripts/terminal_smoke.py
+  s_182b57d57fb830::t_7c1e4c55724edb 190
+src/generator/mod.rs
+  s_182b57d57fb830::t_ee3a1b15d9491e 194-196,202-205,335-345,350-352,356-360
+  s_182b57d57fb830::t_e5df71f9880b05 164
+  s_182b57d57fb830::t_7c1e4c55724edb 58-62,69,330-334,346-349,353-355,361-363
+  s_182b57d57fb830::t_9cbb199968a745 57,364
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fb3bc6c485b5fe575daf7694c7805ab37a375ddc",
+  "prompts": {},
+  "sessions": {
+    "s_182b57d57fb830": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d01c-c0d8-7cd2-92c9-53e9b6a3ea51",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Fishbaugh <github.sadmachine@gmail.com>"
+    }
+  }
+}
