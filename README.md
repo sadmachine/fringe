@@ -14,7 +14,12 @@ cargo run --release
 
 Linux and macOS are the targets. Use an interactive terminal with at least 80 columns and 24 rows, Unicode block characters, and true-color support. Kitty works; the game uses terminal cells rather than Kitty graphics. A Nerd Font is welcome but not required. Avoid fonts configured to give block characters double width.
 
-Choose easy, normal, or hard with the arrows or `1`, `2`, `3`, then press Enter. Difficulty changes the board size, minimum solution length, and spike placement. Every accepted stage has a safe exit. Collecting every reward is optional, and the par shown is the shortest safe route in slides.
+Choose easy, normal, or hard with the arrows or `1`, `2`, `3`, then press Enter. Difficulty changes the board size, minimum solution length, and spike placement. The HUD shows two exact pars in slides:
+
+- `ANY%`: reach the exit safely, with collectibles optional.
+- `100%`: collect every dot and coin, then reach the exit safely.
+
+Entering the exit still ends the run immediately. Generation proves both objectives are possible and retries layouts whose full-clear par cannot be proved within the search budget. Difficulty ranges apply to `ANY%`.
 
 Easy uses two pieces; normal and hard use four, with larger interiors on hard. The start and exit are separated by at least half the interior width and height. Generation rejects layouts where less than three quarters of any piece is usable, then turns small unplayable pockets into solid walls. Every remaining floor cell lies on a safe route that can still reach the exit, including after spike placement. Decorative space is wall rather than empty corridors.
 
@@ -52,7 +57,7 @@ cargo build --release --locked
 python3 scripts/terminal_smoke.py target/release/fringe
 ```
 
-The Rust tests check movement, solver edge cases, playable piece geometry, and 100 seeds at each difficulty. An independent test solver verifies the final boards, every floor cell's usability, start/exit separation, and safe reward placement, then plays every solution through the game model. The Python script uses only the standard library and drives the real executable in a pseudo-terminal, including winning a stage, replay, pause, resize, quit, and terminal restoration. CI runs these checks on Linux and macOS.
+The Rust tests check movement, solver edge cases, playable piece geometry, and 100 seeds at each difficulty. An independent test solver verifies the final boards, every floor cell's usability, start/exit separation, and safe reward placement, then plays every ANY% solution through the game model. Full-clear tests replay complete-collection solutions through the game, check hand-calculated optima, and compare against an independent exhaustive search on small stages. Tests use light optimization to keep exact route searches practical. The Python script uses only the standard library and drives the real executable in a pseudo-terminal, including both par labels, winning a stage, replay, pause, resize, quit, and terminal restoration. CI runs these checks on Linux and macOS.
 
 ## Code
 

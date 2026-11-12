@@ -92,6 +92,51 @@ fn verify(board: &Board, start: Pos) -> (Vec<Direction>, HashSet<Pos>) {
 }
 
 #[test]
+fn full_clear_par_matches_an_independent_search_on_small_stages() {
+    for seed in 0..5 {
+        let stage = generate(seed, Difficulty::Easy).unwrap();
+        let rewards: HashMap<_, _> = (0..stage.board.height)
+            .flat_map(|y| (0..stage.board.width).map(move |x| Pos { x, y }))
+            .filter(|p| matches!(stage.board.get(*p), Tile::Dot | Tile::Coin))
+            .enumerate()
+            .map(|(bit, pos)| (pos, bit))
+            .collect();
+        assert!(
+            rewards.len() < 64,
+            "oracle fixture must fit its simple cell mask"
+        );
+        let target = (1u64 << rewards.len()) - 1;
+        let mut queue = VecDeque::from([(stage.start, 0u64, 0)]);
+        let mut visited = HashSet::from([(stage.start, 0u64)]);
+        let mut minimum = None;
+        while let Some((pos, collected, slides)) = queue.pop_front() {
+            for direction in Direction::ALL {
+                if let Some((end, cells, won)) = slide(&stage.board, pos, direction) {
+                    let mut found = collected;
+                    for cell in cells {
+                        if let Some(bit) = rewards.get(&cell) {
+                            found |= 1u64 << bit;
+                        }
+                    }
+                    if won {
+                        if found == target {
+                            minimum = Some(slides + 1);
+                            break;
+                        }
+                    } else if visited.insert((end, found)) {
+                        queue.push_back((end, found, slides + 1));
+                    }
+                }
+            }
+            if minimum.is_some() {
+                break;
+            }
+        }
+        assert_eq!(minimum, Some(stage.pars.full_clear), "easy seed {seed}");
+    }
+}
+
+#[test]
 fn seeded_stages_are_solvable_reproducible_and_fit_the_terminal() {
     for difficulty in Difficulty::ALL {
         for seed in 0..100 {
@@ -112,7 +157,8 @@ fn seeded_stages_are_solvable_reproducible_and_fit_the_terminal() {
                 "{difficulty} seed {seed} length {}",
                 solution.len()
             );
-            assert_eq!(solution.len(), stage.par);
+            assert_eq!(solution.len(), stage.pars.any_percent);
+            assert!(stage.pars.full_clear >= stage.pars.any_percent);
             for y in 0..board.height {
                 for x in 0..board.width {
                     let pos = Pos { x, y };

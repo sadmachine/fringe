@@ -187,6 +187,7 @@ def main():
         game.wait_for(lambda s: "RANDOM STAGES" in s.text())
         game.send("1\r")
         game.wait_for(lambda s: "SLIDES 0" in s.text())
+        assert re.search(r"PAR ANY% [1-9]\d* / 100% [1-9]\d*", game.screen.text()), "both exact pars must be visible"
         initial = game.screen.board()
         game.send("p")
         game.wait_for(lambda s: "PAUSED" in s.text())

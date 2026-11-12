@@ -143,8 +143,11 @@ pub fn draw(out: &mut impl Write, app: &App, size: (u16, u16)) -> io::Result<()>
                     top + 2,
                     INK,
                     &format!(
-                        "SCORE {:04}    SLIDES {}    PAR {}",
-                        game.score, game.slides, run.stage.par
+                        "SCORE {:04}   SLIDES {}   PAR ANY% {} / 100% {}",
+                        game.score,
+                        game.slides,
+                        run.stage.pars.any_percent,
+                        run.stage.pars.full_clear
                     ),
                 )?;
                 let left = (width - game.board.width as u16 * 2) / 2;

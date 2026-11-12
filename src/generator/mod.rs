@@ -55,12 +55,18 @@ impl std::str::FromStr for Difficulty {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pars {
+    pub any_percent: usize,
+    pub full_clear: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage {
     pub board: Board,
     pub start: Pos,
     pub seed: u64,
     pub difficulty: Difficulty,
-    pub par: usize,
+    pub pars: Pars,
 }
 
 pub fn generate(seed: u64, difficulty: Difficulty) -> Result<Stage, String> {
@@ -155,7 +161,7 @@ fn generate_with_budget(
                     }
                 }
                 let verified = solver::analyze(&board, start);
-                let Some(path) = verified.solution else {
+                let Some(ref path) = verified.solution else {
                     continue;
                 };
                 if !difficulty.slide_range().contains(&path.len()) {
@@ -185,12 +191,18 @@ fn generate_with_budget(
                         }
                     }
                 }
+                let Ok(full_path) = solver::full_clear(&board, start, &verified, 50_000) else {
+                    continue;
+                };
                 return Ok(Stage {
                     board,
                     start,
                     seed,
                     difficulty,
-                    par: path.len(),
+                    pars: Pars {
+                        any_percent: path.len(),
+                        full_clear: full_path.len(),
+                    },
                 });
             }
         }
@@ -314,6 +326,41 @@ fn connect(board: &mut Board, port: Pos, (dx, dy): (isize, isize), room_w: usize
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn both_pars_have_playable_witnesses_and_full_clear_collects_every_reward() {
+        for difficulty in Difficulty::ALL {
+            for seed in 0..10 {
+                let stage = generate(seed, difficulty).unwrap();
+                let analysis = solver::analyze(&stage.board, stage.start);
+                let path = solver::full_clear(&stage.board, stage.start, &analysis, 50_000)
+                    .unwrap_or_else(|error| panic!("{difficulty} seed {seed}: {error:?}"));
+                assert_eq!(
+                    stage.pars.any_percent,
+                    analysis.solution.as_ref().unwrap().len()
+                );
+                assert_eq!(
+                    stage.pars.full_clear,
+                    path.len(),
+                    "{difficulty} seed {seed}"
+                );
+                assert!(stage.pars.full_clear >= stage.pars.any_percent);
+                let mut game = crate::model::Game::new(stage.board, stage.start);
+                for direction in path {
+                    game.launch(direction);
+                    while game.direction.is_some() {
+                        game.tick();
+                    }
+                }
+                assert_eq!(game.outcome, crate::model::Outcome::Cleared);
+                assert_eq!(game.slides as usize, stage.pars.full_clear);
+                assert!(!game
+                    .board
+                    .tiles
+                    .iter()
+                    .any(|tile| matches!(tile, Tile::Dot | Tile::Coin)));
+            }
+        }
+    }
     #[test]
     fn useful_rooms_rejects_a_missing_section_but_allows_small_pockets() {
         let mut board = Board::filled(17, 13, Tile::Wall);
