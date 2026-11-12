@@ -1,0 +1,33 @@
+src/generator/mod.rs
+  s_182b57d57fb830::t_e08740fdce3dd4 65,69-73
+  s_182b57d57fb830::t_b4c06f65d6c6bb 59-64,66-68,74,217-218,344-359,368,372,376,385
+tests/generation.rs
+  s_182b57d57fb830::t_b4c06f65d6c6bb 95,164-165
+  s_182b57d57fb830::t_00aa6e0081050b 135-139
+scripts/terminal_smoke.py
+  s_182b57d57fb830::t_e08740fdce3dd4 190-194,196
+README.md
+  s_182b57d57fb830::t_e08740fdce3dd4 17,22-24,62
+docs/superpowers/specs/2026-11-12-terminal-maze-design.md
+  s_182b57d57fb830::t_e08740fdce3dd4 96,98
+src/render.rs
+  s_182b57d57fb830::t_00aa6e0081050b 145,148-158,160-163,166-169
+  s_182b57d57fb830::t_e08740fdce3dd4 147,164-165,171-173
+  s_182b57d57fb830::t_d65af2c37a5500 146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "db0c651bf078f5124afd04370f7d6851e87d0f64",
+  "prompts": {},
+  "sessions": {
+    "s_182b57d57fb830": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d01c-c0d8-7cd2-92c9-53e9b6a3ea51",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Fishbaugh <github.sadmachine@gmail.com>"
+    }
+  }
+}
