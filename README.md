@@ -23,6 +23,8 @@ Each objective shows a bright `PAR` target and a dimmer `min` value. Minimum is 
 
 Entering the exit still ends the run immediately. Generation proves both objectives are possible and retries layouts whose full-clear minimum cannot be proved within the search budget. Difficulty ranges apply to the `ANY%` minimum.
 
+Finishing a stage brings up a gold `STAGE CLEAR!` panel with a brief sparkle animation and your score and slide totals. The result stays visible until you continue. Press Enter or N for the next stage, R to replay, or M for the menu, including during the animation.
+
 Easy uses two pieces; normal and hard use four, with larger interiors on hard. The start and exit are separated by at least half the interior width and height. Generation rejects layouts where less than three quarters of any piece is usable, then turns small unplayable pockets into solid walls. Every remaining floor cell lies on a safe route that can still reach the exit, including after spike placement. Decorative space is wall rather than empty corridors.
 
 | Key | Action |

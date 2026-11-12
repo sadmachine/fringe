@@ -1,6 +1,8 @@
 use crate::generator::{generate, Difficulty, Stage};
 use crate::model::{Direction, Game, Outcome};
 
+pub const CELEBRATION_TICKS: u8 = 30;
+
 pub enum Action {
     Move(Direction),
     Choose(Difficulty),
@@ -16,6 +18,7 @@ pub struct Run {
     pub stage: Stage,
     pub game: Game,
     pub paused: bool,
+    pub clear_ticks: u8,
 }
 
 pub enum Screen {
@@ -86,15 +89,27 @@ impl App {
             }
         }
     }
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self) -> bool {
         if let Screen::Playing(run) = &mut self.screen {
             if !run.paused {
+                if run.game.outcome == Outcome::Cleared {
+                    if run.clear_ticks < CELEBRATION_TICKS {
+                        run.clear_ticks += 1;
+                        return true;
+                    }
+                    return false;
+                }
+                let moving = run.game.direction.is_some();
                 run.game.tick();
+                return moving;
             }
         }
+        false
     }
     pub fn running(&self) -> bool {
-        matches!(&self.screen, Screen::Playing(run) if !run.paused && run.game.outcome == Outcome::Playing)
+        matches!(&self.screen, Screen::Playing(run) if !run.paused
+            && (run.game.outcome == Outcome::Playing
+                || (run.game.outcome == Outcome::Cleared && run.clear_ticks < CELEBRATION_TICKS)))
     }
     fn load(&mut self, seed: u64) {
         self.seed = seed;
@@ -105,6 +120,7 @@ impl App {
                     stage,
                     game,
                     paused: false,
+                    clear_ticks: 0,
                 }))
             }
             Err(message) => Screen::Error(message),
@@ -169,6 +185,42 @@ mod tests {
         assert!(matches!(app.screen, Screen::Menu));
         app.handle(Action::Quit);
         assert!(app.quit);
+    }
+
+    #[test]
+    fn clear_celebrates_then_settles_without_changing_the_result() {
+        use crate::model::{Board, Pos, Tile};
+
+        let mut app = App::new(42, Difficulty::Easy);
+        app.handle(Action::Start);
+        if let Screen::Playing(run) = &mut app.screen {
+            let mut board = Board::filled(4, 3, Tile::Wall);
+            board.set(Pos { x: 1, y: 1 }, Tile::Floor);
+            board.set(Pos { x: 2, y: 1 }, Tile::Exit);
+            run.game = Game::new(board, Pos { x: 1, y: 1 });
+        }
+        app.handle(Action::Move(Direction::Right));
+        app.tick();
+        assert_eq!(playing(&app).game.outcome, Outcome::Cleared);
+        assert!(
+            app.running(),
+            "the clear animation needs ticks after winning"
+        );
+        for _ in 0..40 {
+            app.handle(Action::Move(Direction::Left));
+            app.tick();
+        }
+        assert!(
+            !app.running(),
+            "the celebration must eventually stop redrawing"
+        );
+        assert_eq!(playing(&app).game.player, Pos { x: 2, y: 1 });
+        assert_eq!(playing(&app).game.slides, 1);
+        assert_eq!(playing(&app).game.score, 0);
+        assert_eq!(playing(&app).game.outcome, Outcome::Cleared);
+        app.handle(Action::Retry);
+        assert_eq!(playing(&app).game.outcome, Outcome::Playing);
+        assert_eq!(playing(&app).game.slides, 0);
     }
 
     #[test]

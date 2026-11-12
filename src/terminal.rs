@@ -6,7 +6,7 @@ use crossterm::{
     terminal::{self, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use fringe::{
-    app::{Action, App, Screen},
+    app::{Action, App},
     generator::Difficulty,
     model::Direction,
 };
@@ -77,10 +77,7 @@ pub fn run(app: &mut App) -> io::Result<()> {
         let elapsed = now.duration_since(last);
         last = now;
         for _ in 0..clock.advance(elapsed, fits(size) && app.running()) {
-            let moving =
-                matches!(&app.screen, Screen::Playing(run) if run.game.direction.is_some());
-            app.tick();
-            dirty |= moving;
+            dirty |= app.tick();
         }
     }
     Ok(())

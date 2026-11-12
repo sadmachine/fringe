@@ -5,7 +5,7 @@ use crossterm::{
     terminal::{BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate},
 };
 use fringe::{
-    app::{App, Screen},
+    app::{App, Run, Screen, CELEBRATION_TICKS},
     generator::Difficulty,
     model::{Outcome, Pos, Tile},
 };
@@ -110,6 +110,61 @@ fn legend(out: &mut impl Write, width: u16, y: u16) -> io::Result<()> {
         )?;
     }
     Ok(())
+}
+
+fn stage_clear(out: &mut impl Write, run: &Run, width: u16, top: u16) -> io::Result<()> {
+    let panel_width = 54;
+    let left = (width - panel_width) / 2;
+    let panel_top = top + 7;
+    // Cover the maze so the result reads as a new state, even without animation.
+    for row in 0..11 {
+        queue!(
+            out,
+            MoveTo(left, panel_top + row),
+            SetForegroundColor(GOLD),
+            SetBackgroundColor(BACKGROUND),
+            Print(if row == 0 {
+                format!("╔{}╗", "═".repeat(panel_width as usize - 2))
+            } else if row == 10 {
+                format!("╚{}╝", "═".repeat(panel_width as usize - 2))
+            } else {
+                format!("║{}║", " ".repeat(panel_width as usize - 2))
+            })
+        )?;
+    }
+    let sparkles = if run.clear_ticks == CELEBRATION_TICKS {
+        "*        +        *        +        *"
+    } else {
+        match run.clear_ticks / 3 % 3 {
+            0 => "  +      *    .       +    *      .  ",
+            1 => "*     .      +    *      .     +    *",
+            _ => "   *     +      .    *      +     .  ",
+        }
+    };
+    center(out, width, panel_top + 1, CYAN, sparkles)?;
+    center(
+        out,
+        width,
+        panel_top + 3,
+        GOLD,
+        "* * *   STAGE CLEAR!   * * *",
+    )?;
+    center(
+        out,
+        width,
+        panel_top + 5,
+        INK,
+        &format!("SCORE {:04}     SLIDES {}", run.game.score, run.game.slides),
+    )?;
+    center(out, width, panel_top + 7, GOLD, "Enter / N  next stage")?;
+    center(
+        out,
+        width,
+        panel_top + 8,
+        MUTED,
+        "R replay    M menu    Q quit",
+    )?;
+    center(out, width, panel_top + 9, CYAN, sparkles)
 }
 
 pub fn draw(out: &mut impl Write, app: &App, size: (u16, u16)) -> io::Result<()> {
@@ -259,13 +314,7 @@ pub fn draw(out: &mut impl Write, app: &App, size: (u16, u16)) -> io::Result<()>
                     }
                 }
                 match game.outcome {
-                    Outcome::Cleared => center(
-                        out,
-                        width,
-                        top + 21,
-                        GOLD,
-                        "STAGE CLEAR!  Enter / N next seed   R replay   M menu",
-                    )?,
+                    Outcome::Cleared => stage_clear(out, run, width, top)?,
                     Outcome::Died => center(
                         out,
                         width,
@@ -278,13 +327,15 @@ pub fn draw(out: &mut impl Write, app: &App, size: (u16, u16)) -> io::Result<()>
                     }
                     Outcome::Playing => legend(out, width, top + 21)?,
                 }
-                center(
-                    out,
-                    width,
-                    top + 23,
-                    MUTED,
-                    "Arrows/WASD/HJKL slide   P pause   R retry   N new   M menu   Q quit",
-                )?;
+                if game.outcome != Outcome::Cleared {
+                    center(
+                        out,
+                        width,
+                        top + 23,
+                        MUTED,
+                        "Arrows/WASD/HJKL slide   P pause   R retry   N new   M menu   Q quit",
+                    )?;
+                }
             }
             Screen::Error(message) => {
                 center(out, width, top + 7, PINK, "GENERATION FAILED")?;

@@ -167,6 +167,16 @@ def solution(board):
     raise AssertionError("screen maze has no safe solution")
 
 
+def clear_stage(game, board):
+    path = solution(board)
+    for index, (key, (x, y)) in enumerate(path):
+        game.send(key)
+        if index == len(path) - 1:
+            game.wait_for(lambda s: "STAGE CLEAR!" in s.text())
+        else:
+            game.wait_for(lambda s: s.board()[y][x] == "S")
+
+
 def main():
     # Fragmented reads must expose only complete synchronized frames.
     screen = Screen()
@@ -210,20 +220,46 @@ def main():
         game.wait_for(lambda s: "SLIDES 0" in s.text())
         assert game.screen.board() == initial, "small-terminal controls moved the player"
 
-        for key, (x, y) in solution(initial):
-            game.send(key)
-            game.wait_for(lambda s: "oo" in s.text() and s.board()[y][x] == "S")
+        clear_stage(game, initial)
+        rows = game.screen.text().splitlines()
+        assert "STAGE CLEAR!" in rows[10], "win title must be prominent in the maze area"
+        assert "╔" in rows[7] and "╚" in rows[17], "win panel must fit the minimum terminal"
+        assert "Enter / N  next stage" in rows[14] and "R replay" in rows[15]
+        result = re.search(r"SCORE (\d+)\s+SLIDES (\d+)", rows[12]).groups()
+        first_frame = game.screen.text()
+        game.wait_for(lambda s: s.text() != first_frame, timeout=1)
+        assert "STAGE CLEAR!" in game.screen.text(), "sparkles must keep the result visible"
+        game.send("wasdp")
+        deadline = time.monotonic() + 1.4
+        while time.monotonic() < deadline:
+            game.read()
+        settled = game.screen.text()
+        assert re.search(r"SCORE (\d+)\s+SLIDES (\d+)", settled.splitlines()[12]).groups() == result
+        assert "STAGE CLEAR!" in settled and "PAUSED" not in settled
+        output_size = len(game.raw)
+        game.read(0.2)
+        assert len(game.raw) == output_size, "settled celebration must stop redrawing"
+        game.set_size(40, 12)
+        game.wait_for(lambda s: "Simulation suspended" in s.text())
+        game.set_size(100, 30)
+        game.wait_for(lambda s: "STAGE CLEAR!" in s.text())
+        assert "STAGE CLEAR!" in game.screen.text().splitlines()[13]
+        game.set_size(80, 24)
         game.wait_for(lambda s: "STAGE CLEAR!" in s.text())
         game.send("r")
         game.wait_for(lambda s: "SLIDES 0" in s.text())
         assert game.screen.board() == initial, "retry changed the seeded maze"
-        game.send("n")
+        clear_stage(game, initial)
+        game.send("\r")
         game.wait_for(lambda s: "SEED 43" in s.text())
+        assert "STAGE CLEAR!" not in game.screen.text(), "Enter must dismiss the animation immediately"
         assert game.screen.board() != initial
+        game.send("n")
+        game.wait_for(lambda s: "SEED 44" in s.text())
         game.send("m")
         game.wait_for(lambda s: "RANDOM STAGES" in s.text())
         game.send("3\r")
-        game.wait_for(lambda s: "HARD  /  SEED 43" in s.text() and "SLIDES 0" in s.text())
+        game.wait_for(lambda s: "HARD  /  SEED 44" in s.text() and "SLIDES 0" in s.text())
         assert len(game.screen.board()) == 17
         game.close("q")
     finally:
@@ -235,7 +271,7 @@ def main():
         game.close("\x03")
     finally:
         game.dispose()
-    print("PTY acceptance passed: menu, difficulty, win, replay, next seed, pause, resize, Q, Ctrl-C, cleanup, CLI errors")
+    print("PTY acceptance passed: menu, difficulty, win celebration, replay, next seed, pause, resize, Q, Ctrl-C, cleanup, CLI errors")
 
 
 if __name__ == "__main__":
