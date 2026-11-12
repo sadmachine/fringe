@@ -1,0 +1,27 @@
+src/terminal.rs
+  s_182b57d57fb830::t_7c3c8353f3505c 100-102,184-189,215-220
+  s_182b57d57fb830::t_6ded8b964471f0 89,91-95,99,214
+  s_182b57d57fb830::t_3c9a5bb06affb0 70,90,96-98,103-112,170-183,190-213,221-224
+scripts/terminal_smoke.py
+  s_182b57d57fb830::t_d7a361cc31f1e3 171-179
+  s_182b57d57fb830::t_c5f9940d55ae4a 38,55-56,74,77
+  s_182b57d57fb830::t_6ded8b964471f0 23-28,97
+docs/superpowers/plans/2026-11-12-random-stages.md
+  s_182b57d57fb830::t_1e230f58a42a1c 61,71-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d07bd3a859bfbfaebd87a616b2e1fd38b9f48b6",
+  "prompts": {},
+  "sessions": {
+    "s_182b57d57fb830": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d01c-c0d8-7cd2-92c9-53e9b6a3ea51",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Fishbaugh <github.sadmachine@gmail.com>"
+    }
+  }
+}
