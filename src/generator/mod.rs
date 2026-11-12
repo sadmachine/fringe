@@ -56,8 +56,22 @@ impl std::str::FromStr for Difficulty {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pars {
-    pub any_percent: usize,
-    pub full_clear: usize,
+    pub any_percent_minimum: usize,
+    pub full_clear_minimum: usize,
+}
+
+impl Pars {
+    pub fn any_percent(&self) -> usize {
+        Self::with_allowance(self.any_percent_minimum)
+    }
+
+    pub fn full_clear(&self) -> usize {
+        Self::with_allowance(self.full_clear_minimum)
+    }
+
+    fn with_allowance(minimum: usize) -> usize {
+        minimum + minimum.div_ceil(4).max(2)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -200,8 +214,8 @@ fn generate_with_budget(
                     seed,
                     difficulty,
                     pars: Pars {
-                        any_percent: path.len(),
-                        full_clear: full_path.len(),
+                        any_percent_minimum: path.len(),
+                        full_clear_minimum: full_path.len(),
                     },
                 });
             }
@@ -327,6 +341,22 @@ fn connect(board: &mut Board, port: Pos, (dx, dy): (isize, isize), room_w: usize
 mod tests {
     use super::*;
     #[test]
+    fn pars_allow_detours_and_round_fractional_allowances_up() {
+        for (any_minimum, full_minimum, any_par, full_par) in [
+            (3, 14, 5, 18),
+            (8, 9, 10, 12),
+            (12, 17, 15, 22),
+            (20, 28, 25, 35),
+        ] {
+            let pars = Pars {
+                any_percent_minimum: any_minimum,
+                full_clear_minimum: full_minimum,
+            };
+            assert_eq!(pars.any_percent(), any_par);
+            assert_eq!(pars.full_clear(), full_par);
+        }
+    }
+    #[test]
     fn both_pars_have_playable_witnesses_and_full_clear_collects_every_reward() {
         for difficulty in Difficulty::ALL {
             for seed in 0..10 {
@@ -335,15 +365,15 @@ mod tests {
                 let path = solver::full_clear(&stage.board, stage.start, &analysis, 50_000)
                     .unwrap_or_else(|error| panic!("{difficulty} seed {seed}: {error:?}"));
                 assert_eq!(
-                    stage.pars.any_percent,
+                    stage.pars.any_percent_minimum,
                     analysis.solution.as_ref().unwrap().len()
                 );
                 assert_eq!(
-                    stage.pars.full_clear,
+                    stage.pars.full_clear_minimum,
                     path.len(),
                     "{difficulty} seed {seed}"
                 );
-                assert!(stage.pars.full_clear >= stage.pars.any_percent);
+                assert!(stage.pars.full_clear_minimum >= stage.pars.any_percent_minimum);
                 let mut game = crate::model::Game::new(stage.board, stage.start);
                 for direction in path {
                     game.launch(direction);
@@ -352,7 +382,7 @@ mod tests {
                     }
                 }
                 assert_eq!(game.outcome, crate::model::Outcome::Cleared);
-                assert_eq!(game.slides as usize, stage.pars.full_clear);
+                assert_eq!(game.slides as usize, stage.pars.full_clear_minimum);
                 assert!(!game
                     .board
                     .tiles

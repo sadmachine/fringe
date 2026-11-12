@@ -142,14 +142,35 @@ pub fn draw(out: &mut impl Write, app: &App, size: (u16, u16)) -> io::Result<()>
                     width,
                     top + 2,
                     INK,
-                    &format!(
-                        "SCORE {:04}   SLIDES {}   PAR ANY% {} / 100% {}",
-                        game.score,
-                        game.slides,
-                        run.stage.pars.any_percent,
-                        run.stage.pars.full_clear
-                    ),
+                    &format!("SCORE {:04}   SLIDES {}", game.score, game.slides),
                 )?;
+                let targets = [
+                    (
+                        GOLD,
+                        format!("ANY%  PAR {}  ", run.stage.pars.any_percent()),
+                    ),
+                    (
+                        MUTED,
+                        format!("(min {})", run.stage.pars.any_percent_minimum),
+                    ),
+                    (
+                        GOLD,
+                        format!("    100%  PAR {}  ", run.stage.pars.full_clear()),
+                    ),
+                    (
+                        MUTED,
+                        format!("(min {})", run.stage.pars.full_clear_minimum),
+                    ),
+                ];
+                let target_width: usize = targets.iter().map(|(_, text)| text.len()).sum();
+                queue!(
+                    out,
+                    MoveTo(width.saturating_sub(target_width as u16) / 2, top + 3),
+                    SetBackgroundColor(BACKGROUND)
+                )?;
+                for (color, text) in targets {
+                    queue!(out, SetForegroundColor(color), Print(text))?;
+                }
                 let left = (width - game.board.width as u16 * 2) / 2;
                 let board_top = top + 4 + (17 - game.board.height as u16) / 2;
                 for y in 0..game.board.height {

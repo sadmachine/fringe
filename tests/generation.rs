@@ -92,7 +92,7 @@ fn verify(board: &Board, start: Pos) -> (Vec<Direction>, HashSet<Pos>) {
 }
 
 #[test]
-fn full_clear_par_matches_an_independent_search_on_small_stages() {
+fn full_clear_minimum_matches_an_independent_search_on_small_stages() {
     for seed in 0..5 {
         let stage = generate(seed, Difficulty::Easy).unwrap();
         let rewards: HashMap<_, _> = (0..stage.board.height)
@@ -132,7 +132,11 @@ fn full_clear_par_matches_an_independent_search_on_small_stages() {
                 break;
             }
         }
-        assert_eq!(minimum, Some(stage.pars.full_clear), "easy seed {seed}");
+        assert_eq!(
+            minimum,
+            Some(stage.pars.full_clear_minimum),
+            "easy seed {seed}"
+        );
     }
 }
 
@@ -157,8 +161,8 @@ fn seeded_stages_are_solvable_reproducible_and_fit_the_terminal() {
                 "{difficulty} seed {seed} length {}",
                 solution.len()
             );
-            assert_eq!(solution.len(), stage.pars.any_percent);
-            assert!(stage.pars.full_clear >= stage.pars.any_percent);
+            assert_eq!(solution.len(), stage.pars.any_percent_minimum);
+            assert!(stage.pars.full_clear_minimum >= stage.pars.any_percent_minimum);
             for y in 0..board.height {
                 for x in 0..board.width {
                     let pos = Pos { x, y };

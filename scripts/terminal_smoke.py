@@ -187,8 +187,13 @@ def main():
         game.wait_for(lambda s: "RANDOM STAGES" in s.text())
         game.send("1\r")
         game.wait_for(lambda s: "SLIDES 0" in s.text())
-        assert re.search(r"PAR ANY% [1-9]\d* / 100% [1-9]\d*", game.screen.text()), "both exact pars must be visible"
+        targets = re.search(r"ANY%  PAR ([1-9]\d*)  \(min ([1-9]\d*)\)\s+100%  PAR ([1-9]\d*)  \(min ([1-9]\d*)\)", game.screen.text())
+        assert targets, "par and minimum for both objectives must fit the 80x24 HUD"
+        any_par, any_minimum, full_par, full_minimum = map(int, targets.groups())
+        assert any_par > any_minimum and full_par > full_minimum
+        assert full_minimum >= any_minimum
         initial = game.screen.board()
+        assert any_minimum == len(solution(initial)), "HUD minimum must match the actual shortest route"
         game.send("p")
         game.wait_for(lambda s: "PAUSED" in s.text())
         game.send("wasd")
