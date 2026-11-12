@@ -1,0 +1,24 @@
+docs/planned-features.md
+  s_d1251c1b3fa022::t_e3685c31f57d6c 5,7-18,32-33,48-56,73-75
+  s_d1251c1b3fa022::t_145d410957a77a 61-72,76-80
+  s_d1251c1b3fa022::t_533418a931b37f 1-4,6,19-31,34-47,57-60
+README.md
+  s_d1251c1b3fa022::t_145d410957a77a 74
+  s_d1251c1b3fa022::t_533418a931b37f 73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a932f7b08ea5e7dccef9228889bc203a5f30dc41",
+  "prompts": {},
+  "sessions": {
+    "s_d1251c1b3fa022": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d1ad-66a6-7562-949d-4f3acef4be1e",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Fishbaugh <github.sadmachine@gmail.com>"
+    }
+  }
+}
