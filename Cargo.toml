@@ -1,0 +1,12 @@
+[package]
+name = "fringe"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Procedural slide mazes for the terminal"
+license = "MIT"
+
+[dependencies]
+crossterm = "=0.27.0"
+rand = "=0.8.5"
+rand_chacha = "=0.3.1"

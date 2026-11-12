@@ -1,6 +1,6 @@
 # Fringe: procedural terminal maze stages
 
-Status: proposed design, awaiting user approval before implementation.
+Status: approved by the user on 2026-11-12; implementation authorized.
 
 ## Intent
 
