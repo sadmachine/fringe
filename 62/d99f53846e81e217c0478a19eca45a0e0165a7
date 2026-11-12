@@ -1,0 +1,19 @@
+docs/superpowers/specs/2026-11-12-terminal-maze-design.md
+  s_182b57d57fb830::t_55ae19cf5c4e20 1-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62d99f53846e81e217c0478a19eca45a0e0165a7",
+  "prompts": {},
+  "sessions": {
+    "s_182b57d57fb830": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1d01c-c0d8-7cd2-92c9-53e9b6a3ea51",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Austin Fishbaugh <github.sadmachine@gmail.com>"
+    }
+  }
+}
