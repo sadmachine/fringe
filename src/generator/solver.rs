@@ -1,4 +1,4 @@
-use crate::model::{Board, Direction, Pos, Step, Tile};
+use crate::model::{Board, Direction, Pos, Step, Tile, SPIKE_RETRACTED_TICKS, TOUCH_DELAY_TICKS};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 pub(super) struct Analysis {
@@ -6,6 +6,36 @@ pub(super) struct Analysis {
     pub solution: Option<Vec<Direction>>,
     pub safe_cells: HashSet<Pos>,
     slides: Vec<Slide>,
+}
+
+impl Analysis {
+    pub fn hazards_allow_safe_waits(&self, board: &Board, start: Pos) -> bool {
+        // Waiting has zero slide cost. With safe resting cells and a shared
+        // pulse window and touch delay longer than every slide, each geometric
+        // edge remains playable after waiting for touch traps to reset and pulse
+        // spikes to retract. Thus both exact slide minimums remain valid.
+        if self
+            .slides
+            .iter()
+            .any(|s| s.cells.len() >= usize::from(SPIKE_RETRACTED_TICKS.min(TOUCH_DELAY_TICKS)))
+        {
+            return false;
+        }
+        let resting: HashSet<_> = self
+            .slides
+            .iter()
+            .filter_map(|s| s.to)
+            .chain(Some(start.y * board.width + start.x))
+            .collect();
+        board.tiles.iter().enumerate().all(|(index, tile)| {
+            let pos = Pos {
+                x: index % board.width,
+                y: index / board.width,
+            };
+            !matches!(tile, Tile::TimedSpike | Tile::TouchTrap)
+                || (self.safe_cells.contains(&pos) && !resting.contains(&index))
+        })
+    }
 }
 
 struct Slide {
@@ -264,12 +294,12 @@ pub(super) fn analyze(board: &Board, start: Pos) -> Analysis {
     }
     for edge in &edges {
         if edge.to.is_none() || edge.to.is_some_and(|to| can_win[to]) {
-            safe_cells.extend(
-                edge.cells
-                    .iter()
-                    .copied()
-                    .filter(|p| matches!(board.get(*p), Tile::Floor | Tile::Dot | Tile::Coin)),
-            );
+            safe_cells.extend(edge.cells.iter().copied().filter(|p| {
+                matches!(
+                    board.get(*p),
+                    Tile::Floor | Tile::Dot | Tile::Coin | Tile::TimedSpike | Tile::TouchTrap
+                )
+            }));
         }
     }
     Analysis {
@@ -297,6 +327,8 @@ mod tests {
                         'E' => Tile::Exit,
                         '.' => Tile::Dot,
                         '$' => Tile::Coin,
+                        'T' => Tile::TimedSpike,
+                        'H' => Tile::TouchTrap,
                         _ => Tile::Floor,
                     },
                 );
@@ -308,6 +340,24 @@ mod tests {
     fn collection(rows: &[&str], start: Pos) -> Result<Vec<Direction>, CollectionError> {
         let board = board(rows);
         full_clear(&board, start, &analyze(&board, start), 50_000)
+    }
+
+    #[test]
+    fn hazard_validation_rejects_unsafe_stops_and_overlong_slides() {
+        let corridor = board(&["#######", "# TH E#", "#######"]);
+        let start = Pos { x: 1, y: 1 };
+        assert!(analyze(&corridor, start).hazards_allow_safe_waits(&corridor, start));
+        let unsafe_stop = board(&["#######", "#    T#", "# ###E#", "#######"]);
+        assert!(!analyze(&unsafe_stop, start).hazards_allow_safe_waits(&unsafe_stop, start));
+        let unsafe_start = board(&["#######", "#H   E#", "#######"]);
+        assert!(!analyze(&unsafe_start, start).hazards_allow_safe_waits(&unsafe_start, start));
+
+        let mut long = Board::filled(55, 3, Tile::Wall);
+        for x in 1..54 {
+            long.set(Pos { x, y: 1 }, Tile::Floor);
+        }
+        long.set(Pos { x: 53, y: 1 }, Tile::Exit);
+        assert!(!analyze(&long, start).hazards_allow_safe_waits(&long, start));
     }
 
     #[test]

@@ -73,15 +73,20 @@ class Screen:
     def text(self):
         return "\n".join("".join(row) for row in self.visible_rows)
 
-    def board(self):
+    def board_tokens(self):
         lines = ["".join(row) for row in self.visible_rows]
-        board_rows = [i for i, line in enumerate(lines) if "██" in line]
+        wall_pattern = r"(?:██|[▏▕▔▁][▏▕▔▁ ]| [▏▕▔▁])+"
+        board_rows = [i for i, line in enumerate(lines) if re.search(wall_pattern, line)]
         assert board_rows, self.text()
         top, bottom = min(board_rows), max(board_rows)
-        left = lines[top].index("██")
-        width = len(re.match(r"█+", lines[top][left:]).group()) // 2
-        tokens = {"██": "#", "  ": " ", ". ": " ", "$ ": " ", "/\\": "^", "<>": "E", "oo": "S"}
-        return tuple("".join(tokens[line[left + 2*x:left + 2*x + 2]] for x in range(width)) for line in lines[top:bottom + 1])
+        border = re.search(wall_pattern, lines[top])
+        left = border.start()
+        width = len(border.group()) // 2
+        return tuple(tuple(line[left + 2*x:left + 2*x + 2] for x in range(width)) for line in lines[top:bottom + 1])
+
+    def board(self):
+        tokens = {"██": "#", "  ": " ", ". ": " ", "$ ": " ", "/\\": "^", "==": "T", "[]": "C", "!!": "T", "^^": "T", "<>": "E", "oo": "S"}
+        return tuple("".join("#" if any(c in "▏▕▔▁" for c in token) else tokens[token] for token in row) for row in self.board_tokens())
 
 
 class Game:
@@ -125,6 +130,11 @@ class Game:
     def send(self, keys):
         os.write(self.master, keys.encode())
 
+    def read_for(self, duration):
+        deadline = time.monotonic() + duration
+        while time.monotonic() < deadline:
+            self.read(min(0.1, max(0, deadline - time.monotonic())))
+
     def close(self, key):
         self.send(key)
         deadline = time.monotonic() + 5
@@ -146,7 +156,7 @@ class Game:
         os.close(self.slave)
 
 
-def solution(board):
+def solution(board, touch=False):
     start = next((x, y) for y, row in enumerate(board) for x, cell in enumerate(row) if cell == "S")
     queue = collections.deque([(start, [])])
     visited = {start}
@@ -154,22 +164,58 @@ def solution(board):
         (x, y), path = queue.popleft()
         for key, dx, dy in [("w", 0, -1), ("d", 1, 0), ("s", 0, 1), ("a", -1, 0)]:
             nx, ny = x, y
+            touched = False
             while board[ny + dy][nx + dx] != "#":
                 nx, ny = nx + dx, ny + dy
                 if board[ny][nx] == "^":
                     break
+                touched |= board[ny][nx] == "C"
                 if board[ny][nx] == "E":
+                    if touch:
+                        break
                     return path + [(key, (nx, ny))]
             else:
+                if touch and touched:
+                    return path + [(key, (nx, ny))]
                 if (nx, ny) not in visited:
                     visited.add((nx, ny))
                     queue.append(((nx, ny), path + [(key, (nx, ny))]))
-    raise AssertionError("screen maze has no safe solution")
+    raise AssertionError("screen maze has no safe touch approach" if touch else "screen maze has no safe solution")
+
+
+def touch_positions(board):
+    return [(x, y) for y, row in enumerate(board) for x, cell in enumerate(row) if cell == "C"]
+
+
+def ready_for_slide(game, board):
+    traps = touch_positions(board)
+    game.wait_for(lambda s: all(s.board_tokens()[y][x] == "[]" for x, y in traps))
+    # Observe a fresh safe window, rather than guessing wall-clock delays.
+    game.wait_for(lambda s: "PULSE ^^ ACTIVE" in s.text())
+    game.wait_for(lambda s: "PULSE == SAFE" in s.text())
+
+
+def assert_wall_marks(screen, board):
+    glyphs = screen.board_tokens()
+    for y, row in enumerate(board):
+        for x, cell in enumerate(row):
+            if cell != "#":
+                continue
+            faces = [(x-1, y, "▏"), (x, y-1, "▔"), (x, y+1, "▁"), (x+1, y, "▕")]
+            edges = [mark for nx, ny, mark in faces if 0 <= ny < len(board) and 0 <= nx < len(row)
+                     and board[ny][nx] in ("^", "T", "C")]
+            actual = glyphs[y][x]
+            if not edges:
+                assert actual == "██", f"unmarked wall changed at {(x, y)}"
+            else:
+                assert any(c in edges for c in actual), f"missing spike-facing edge at {(x, y)}"
+                assert all(c == " " or c in edges for c in actual), f"edge faces away from spikes at {(x, y)}"
 
 
 def clear_stage(game, board):
     path = solution(board)
     for index, (key, (x, y)) in enumerate(path):
+        ready_for_slide(game, board)
         game.send(key)
         if index == len(path) - 1:
             game.wait_for(lambda s: "STAGE CLEAR!" in s.text())
@@ -203,22 +249,58 @@ def main():
         assert any_par > any_minimum and full_par > full_minimum
         assert full_minimum >= any_minimum
         initial = game.screen.board()
+        assert any("T" in row for row in initial), "stage must contain a timed wall"
+        assert any("C" in row for row in initial), "stage must contain a touch trap"
+        assert_wall_marks(game.screen, initial)
         assert any_minimum == len(solution(initial)), "HUD minimum must match the actual shortest route"
+        game.wait_for(lambda s: "PULSE !! WARNING" in s.text())
+        assert "!!" in game.screen.text(), "warning must use a distinct glyph"
         game.send("p")
         game.wait_for(lambda s: "PAUSED" in s.text())
         game.send("wasd")
-        game.read(0.2)
+        game.read_for(1.0)
         assert game.screen.board() == initial, "paused controls moved the player"
+        assert "PULSE !! WARNING" in game.screen.text(), "pause advanced hazards"
         game.send("p")
         game.wait_for(lambda s: "PAUSED" not in s.text())
 
         game.set_size(40, 12)
         game.wait_for(lambda s: "Simulation suspended" in s.text())
         game.send("wasd")
-        game.read(0.2)
+        game.read_for(1.0)
         game.set_size(80, 24)
         game.wait_for(lambda s: "SLIDES 0" in s.text())
         assert game.screen.board() == initial, "small-terminal controls moved the player"
+        assert "PULSE !! WARNING" in game.screen.text(), "resize suspension advanced hazards"
+        assert_wall_marks(game.screen, initial)
+
+        for key, (x, y) in solution(initial, touch=True):
+            ready_for_slide(game, initial)
+            game.send(key)
+            game.wait_for(lambda s: s.board()[y][x] == "S")
+        traps = touch_positions(initial)
+        armed = next((x, y) for x, y in traps if game.screen.board_tokens()[y][x] == "!!")
+        tx, ty = armed
+        assert_wall_marks(game.screen, initial)
+        game.send("p")
+        game.wait_for(lambda s: "PAUSED" in s.text())
+        game.read_for(2.2)
+        assert game.screen.board_tokens()[ty][tx] == "!!", "pause advanced the touch countdown"
+        game.send("p")
+        game.wait_for(lambda s: "PAUSED" not in s.text())
+        game.set_size(40, 12)
+        game.wait_for(lambda s: "Simulation suspended" in s.text())
+        game.read_for(2.2)
+        game.set_size(80, 24)
+        game.wait_for(lambda s: "PULSE" in s.text())
+        assert game.screen.board_tokens()[ty][tx] == "!!", "resize advanced the touch countdown"
+        game.wait_for(lambda s: s.board_tokens()[ty][tx] == "^^")
+        assert_wall_marks(game.screen, initial)
+        game.wait_for(lambda s: s.board_tokens()[ty][tx] == "[]")
+        assert_wall_marks(game.screen, initial)
+        game.send("r")
+        game.wait_for(lambda s: "SLIDES 0" in s.text())
+        assert game.screen.board() == initial, "retry did not reset touch traps"
 
         clear_stage(game, initial)
         rows = game.screen.text().splitlines()
@@ -271,7 +353,7 @@ def main():
         game.close("\x03")
     finally:
         game.dispose()
-    print("PTY acceptance passed: menu, difficulty, win celebration, replay, next seed, pause, resize, Q, Ctrl-C, cleanup, CLI errors")
+    print("PTY acceptance passed: pulse spikes, touch traps, distinct wall mountings, hazard pause/resize freeze, exact slide minimum, menu, difficulty, win celebration, replay, next seed, Q, Ctrl-C, cleanup, CLI errors")
 
 
 if __name__ == "__main__":

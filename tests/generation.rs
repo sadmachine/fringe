@@ -1,6 +1,33 @@
 use fringe::generator::{generate, Difficulty};
-use fringe::model::{Board, Direction, Game, Outcome, Pos, Tile};
+use fringe::model::{Board, Direction, Game, Outcome, Pos, SpikePhase, Tile};
 use std::collections::{HashMap, HashSet, VecDeque};
+
+#[test]
+fn hazards_form_contiguous_challenge_runs_instead_of_isolated_cells() {
+    for difficulty in Difficulty::ALL {
+        for seed in 0..10 {
+            let stage = generate(seed, difficulty).unwrap();
+            for kind in [Tile::TimedSpike, Tile::TouchTrap] {
+                let cells: HashSet<_> = (0..stage.board.height)
+                    .flat_map(|y| (0..stage.board.width).map(move |x| Pos { x, y }))
+                    .filter(|p| stage.board.get(*p) == kind)
+                    .collect();
+                assert!(
+                    cells.len() >= 2,
+                    "{difficulty} seed {seed}: {kind:?} needs a run"
+                );
+                for pos in &cells {
+                    assert!(
+                        cells
+                            .iter()
+                            .any(|other| pos.x.abs_diff(other.x) + pos.y.abs_diff(other.y) == 1),
+                        "{difficulty} seed {seed}: isolated {kind:?} at {pos:?}"
+                    );
+                }
+            }
+        }
+    }
+}
 
 // Independent cell walker: deliberately does not call Board::step or the generator's solver.
 fn slide(board: &Board, from: Pos, direction: Direction) -> Option<(Pos, Vec<Pos>, bool)> {
@@ -51,6 +78,14 @@ fn verify(board: &Board, start: Pos) -> (Vec<Direction>, HashSet<Pos>) {
     while let Some(pos) = queue.pop_front() {
         for direction in Direction::ALL {
             if let Some((end, cells, won)) = slide(board, pos, direction) {
+                assert!(
+                    cells.len() < 50,
+                    "every slide fits in both hazards' safe windows"
+                );
+                assert!(
+                    !matches!(board.get(end), Tile::TimedSpike | Tile::TouchTrap),
+                    "waiting must be safe"
+                );
                 if won {
                     can_win.insert(pos);
                     if solution.is_none() {
@@ -155,6 +190,19 @@ fn seeded_stages_are_solvable_reproducible_and_fit_the_terminal() {
             assert_eq!(board.get(stage.start), Tile::Floor);
             let mut exits = 0;
             let mut rewards = 0;
+            let timed_spikes = board
+                .tiles
+                .iter()
+                .filter(|t| **t == Tile::TimedSpike)
+                .count();
+            assert!(
+                timed_spikes > 0,
+                "{difficulty} seed {seed} has no timed wall"
+            );
+            assert!(
+                board.tiles.contains(&Tile::TouchTrap),
+                "{difficulty} seed {seed} has no touch trap"
+            );
             let (solution, safe) = verify(board, stage.start);
             assert!(
                 difficulty.slide_range().contains(&solution.len()),
@@ -177,12 +225,31 @@ fn seeded_stages_are_solvable_reproducible_and_fit_the_terminal() {
                         assert!(safe.contains(&pos), "unsafe reward {pos:?}");
                         rewards += 1;
                     }
+                    if matches!(tile, Tile::TimedSpike | Tile::TouchTrap) {
+                        assert!(safe.contains(&pos), "inaccessible spike wall {pos:?}");
+                    }
                 }
             }
             assert_eq!(exits, 1);
             assert!(rewards > 0);
             let mut game = Game::new(board.clone(), stage.start);
+            // Begin at different cycle offsets, then wait for fresh retraction
+            // before each slide. Waiting must preserve the exact slide minimum.
+            for _ in 0..seed % 100 {
+                game.tick();
+            }
             for direction in solution {
+                for _ in 0..70 {
+                    game.tick();
+                }
+                for _ in 0..100 {
+                    let before = game.spike_phase();
+                    game.tick();
+                    if before == SpikePhase::Active && game.spike_phase() == SpikePhase::Retracted {
+                        break;
+                    }
+                }
+                assert_eq!(game.outcome, Outcome::Playing);
                 game.launch(direction);
                 for _ in 0..board.width.max(board.height) {
                     if game.direction.is_none() {
@@ -192,6 +259,7 @@ fn seeded_stages_are_solvable_reproducible_and_fit_the_terminal() {
                 }
             }
             assert_eq!(game.outcome, Outcome::Cleared);
+            assert_eq!(game.slides as usize, stage.pars.any_percent_minimum);
         }
     }
 }
@@ -209,7 +277,11 @@ fn stages_use_the_assembled_map_and_separate_start_from_exit() {
                     let pos = Pos { x, y };
                     match stage.board.get(pos) {
                         Tile::Exit => exit = Some(pos),
-                        Tile::Floor | Tile::Dot | Tile::Coin
+                        Tile::Floor
+                        | Tile::Dot
+                        | Tile::Coin
+                        | Tile::TimedSpike
+                        | Tile::TouchTrap
                             if pos != stage.start && !safe.contains(&pos) =>
                         {
                             unusable.push(pos)

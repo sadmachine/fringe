@@ -4,10 +4,11 @@ Track upcoming work here. Unchecked features are planned, not implemented.
 
 ## Implementation order
 
-1. [Timed spike walls](#better-hazards).
-2. [Shield powerup](#powerups).
-3. [Endless mode](#endless-mode).
-4. [Moving enemies](#better-hazards).
+1. [x] [Timed spike walls](#better-hazards). Done 2026-11-12.
+2. [x] [Initial sub-grid templates](#sub-grid-templates). Done 2026-11-13.
+3. [ ] [Shield powerup](#powerups).
+4. [ ] [Endless mode](#endless-mode).
+5. [ ] [Moving enemies](#better-hazards).
 
 This order moves better hazards ahead of endless mode so individual stages gain
 more variety before they become longer runs. Shield follows spike walls to give
@@ -21,6 +22,33 @@ priority. The campaign still follows endless mode.
 Random stages are implemented with selectable difficulty, verified layouts,
 ANY% and 100% minimums and forgiving pars, a color-matched legend, and a
 stage-clear celebration. These changes are merged into `main`.
+
+Pulse spike walls and touch traps are implemented with visible warnings,
+distinct adjacent wall markings, pause and resize freezing, and safe placement
+that preserves exact slide minimums. Shield is next.
+
+The initial sub-grid template set is implemented with declared ports, preserved
+interiors, rotations/reflections, and contiguous hazard runs. See the
+[map research](sub-grid-patterns.md) for visual references and timing limits.
+
+## Sub-grid templates
+
+- [x] Add switchbacks, island returns, loop chains, reward pockets, touch-wall runs, and mixed crossings.
+- [x] Transform tiles, ports, rewards, and hazard groups together.
+- [x] Join declared ports through dividers without carving through template interiors.
+- [x] Replace isolated hazard scattering with authored runs of two to four adjacent cells.
+- [x] Verify every floor and hazard, exact minimums, and full collection on the assembled board.
+- [ ] Add forced timed multi-turn challenges after defining and verifying their temporal safety contract.
+
+Easy has two 9x7 templates; normal has four 9x7 templates; hard has four 11x7
+templates. Every stage has a mixed crossing; normal and hard add a touch-run
+switchback. Pure transport and reward templates vary the rest of the layout.
+The generator rejects invalid assemblies instead of modifying their interiors.
+
+The current safe-stop rule remains: players may wait for traps to reset and pulse
+spikes to retract between slides. Hazard counts and rotations alone do not create
+a forced timed multi-turn sequence. That later feature remains separate from the
+completed initial set.
 
 ## Endless mode
 
@@ -40,24 +68,39 @@ Stage selection and progression still need design.
 
 ## Better hazards
 
-- [ ] Expand beyond the current static spike toward hazards closer to those in
+- [x] Expand beyond the current static spike toward hazards closer to those in
   Tomb of the Mask.
-- [ ] Add dynamic spike walls.
+- [x] Add dynamic spike walls. Done 2026-11-12.
+- [x] Add touch-triggered spike traps and distinct adjacent wall markings. Done 2026-11-12.
 - [ ] Add moving enemies.
 
-Start with timed spike walls:
+Pulse spike walls use one shared cycle: 2.4 seconds retracted (`==`), 0.8 seconds
+warning (`!!`), and 0.8 seconds active (`^^`). Warning cells are passable; active
+spikes kill on contact or activation beneath the player.
 
-- Use a fixed cycle with a clear warning before spikes activate.
-- Freeze hazard timing during pause and terminal resize suspension.
-- Keep generation able to prove stages are beatable.
+Touch traps (`[]`) stay ready until crossed, then warn for two seconds, extend
+spikes for 0.8 seconds, and reset. Each trap counts down independently; crossing
+again while armed does not postpone activation. Both types now appear in grouped
+runs owned by their challenge templates. Pause and terminal resize suspension
+freeze all timers. Retry resets them.
 
-Before implementation, settle how waiting and hazard timing affect solvability
-and exact ANY% and 100% minimums and pars. Moving enemies come after endless mode.
+Walls beside pulse or fixed spikes have orange edge strips; walls beside touch
+traps have cyan strips, following the reference game's cyan touch-wall markings.
+They retain a solid purple body, with strips facing adjacent spikes. Shared
+walls show both colors on separate edges. Bright `==` and `[]` resting symbols
+distinguish the types without color. Active spikes have dark symbols on solid
+pink backgrounds so lethal cells stand out more than their mounts. Wall marks
+apply to cardinal neighbors, remain visible in every phase, and retain normal
+wall collision.
 
-The goal is more varied hazards that make movement and timing matter. Specific
-hazard behaviors, timing, and difficulty placement still need design, including
-how stage verification and exact ANY% and 100% minimums account for hazards that
-change over time.
+Waiting costs no slides. Generation excludes the start and every reachable
+stopping cell from both types' placement, and requires every slide to fit within
+the retracted pulse window and the touch countdown. Each solver edge can be
+played after waiting for all touch traps to reset and for pulse spikes to retract,
+preserving beatability and exact ANY% and 100% slide minimums and pars.
+
+Moving enemies come after endless mode. Their behavior, difficulty placement,
+and effect on stage verification and minimums still need design.
 
 ## Powerups
 

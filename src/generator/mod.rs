@@ -1,10 +1,10 @@
 mod pieces;
 mod solver;
 
-use crate::model::{Board, Pos, Tile};
+use crate::model::{Board, Direction, Pos, Tile};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use std::{collections::HashSet, fmt};
+use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Difficulty {
@@ -25,9 +25,9 @@ impl Difficulty {
 
     fn room_layout(self) -> (usize, usize, usize, usize) {
         match self {
-            Self::Easy => (2, 1, 7, 5),
-            Self::Normal => (2, 2, 7, 5),
-            Self::Hard => (2, 2, 9, 7),
+            Self::Easy => (2, 1, 9, 7),
+            Self::Normal => (2, 2, 9, 7),
+            Self::Hard => (2, 2, 11, 7),
         }
     }
 }
@@ -103,14 +103,6 @@ fn generate_with_budget(
         floors.shuffle(&mut rng);
         for start in floors.iter().take(12).copied() {
             let analysis = solver::analyze(board, start);
-            let reachable: HashSet<_> = floors
-                .iter()
-                .copied()
-                .filter(|p| analysis.distances[p.y * board.width + p.x].is_some())
-                .collect();
-            if !useful_rooms(board, &reachable, difficulty) {
-                continue;
-            }
             let exits: Vec<_> = floors
                 .iter()
                 .copied()
@@ -124,66 +116,25 @@ fn generate_with_budget(
             for exit in exits.into_iter().take(8) {
                 let mut board = assembled.clone();
                 board.set(exit, Tile::Exit);
-                let reachable = solver::analyze(&board, start);
-                if !useful_rooms(&board, &reachable.safe_cells, difficulty) {
-                    continue;
-                }
-                // Small unplayable pockets become solid decoration. Reject whole unused rooms above.
-                for pos in &floors {
-                    if board.get(*pos) == Tile::Floor && !reachable.safe_cells.contains(pos) {
-                        board.set(*pos, Tile::Wall);
-                    }
-                }
-                let check = solver::analyze(&board, start);
-                if !check
-                    .solution
-                    .as_ref()
-                    .is_some_and(|path| difficulty.slide_range().contains(&path.len()))
-                {
-                    continue;
-                }
-                let spike_target = match difficulty {
-                    Difficulty::Easy => 1,
-                    Difficulty::Normal => 4,
-                    Difficulty::Hard => 9,
-                };
-                let mut placed = 0;
-                for candidate in floors
-                    .iter()
-                    .filter(|p| **p != start && **p != exit)
-                    .take(spike_target * 5)
-                {
-                    if board.get(*candidate) != Tile::Floor {
-                        continue;
-                    }
-                    board.set(*candidate, Tile::Spike);
-                    let check = solver::analyze(&board, start);
-                    if check
-                        .solution
-                        .as_ref()
-                        .is_some_and(|p| difficulty.slide_range().contains(&p.len()))
-                        && floors
-                            .iter()
-                            .all(|p| board.get(*p) != Tile::Floor || check.safe_cells.contains(p))
-                    {
-                        placed += 1;
-                    } else {
-                        board.set(*candidate, Tile::Floor);
-                    }
-                    if placed == spike_target {
-                        break;
-                    }
-                }
                 let verified = solver::analyze(&board, start);
                 let Some(ref path) = verified.solution else {
                     continue;
                 };
-                if !difficulty.slide_range().contains(&path.len()) {
-                    continue;
-                }
-                if floors
-                    .iter()
-                    .any(|p| board.get(*p) == Tile::Floor && !verified.safe_cells.contains(p))
+                if !difficulty.slide_range().contains(&path.len())
+                    || !verified.hazards_allow_safe_waits(&board, start)
+                    || board.tiles.iter().enumerate().any(|(index, tile)| {
+                        matches!(
+                            tile,
+                            Tile::Floor
+                                | Tile::Dot
+                                | Tile::Coin
+                                | Tile::TimedSpike
+                                | Tile::TouchTrap
+                        ) && !verified.safe_cells.contains(&Pos {
+                            x: index % board.width,
+                            y: index / board.width,
+                        })
+                    })
                 {
                     continue;
                 }
@@ -192,7 +143,10 @@ fn generate_with_budget(
                 for y in 1..board.height - 1 {
                     for x in 1..board.width - 1 {
                         let pos = Pos { x, y };
-                        if pos != start && verified.safe_cells.contains(&pos) {
+                        if pos != start
+                            && board.get(pos) == Tile::Floor
+                            && verified.safe_cells.contains(&pos)
+                        {
                             board.set(
                                 pos,
                                 if reward_number % 11 == 0 {
@@ -226,113 +180,118 @@ fn generate_with_budget(
     ))
 }
 
-fn useful_rooms(board: &Board, reachable: &HashSet<Pos>, difficulty: Difficulty) -> bool {
-    let (columns, rows, room_w, room_h) = difficulty.room_layout();
-    for row in 0..rows {
-        for column in 0..columns {
-            let mut total = 0;
-            let mut usable = 0;
-            for y in 1 + row * (room_h + 1)..1 + row * (room_h + 1) + room_h {
-                for x in 1 + column * (room_w + 1)..1 + column * (room_w + 1) + room_w {
-                    let pos = Pos { x, y };
-                    if board.get(pos) == Tile::Floor {
-                        total += 1;
-                        usable += usize::from(reachable.contains(&pos));
-                    }
-                }
-            }
-            if total == 0 || usable * 4 < total * 3 {
-                return false;
-            }
-        }
-    }
-    true
-}
-
 fn assemble(difficulty: Difficulty, rng: &mut impl Rng) -> Board {
     use pieces::Family;
     let (columns, rows, room_w, room_h) = difficulty.room_layout();
-    let width = columns * (room_w + 1) + 1;
-    let height = rows * (room_h + 1) + 1;
-    let mut board = Board::filled(width, height, Tile::Wall);
-    let mut families = vec![Family::Switchback, Family::Loop, Family::Chamber];
-    while families.len() < columns * rows {
-        families.push(if rng.gen_bool(0.65) {
-            Family::Switchback
-        } else {
-            Family::Loop
-        });
+    let mut board = Board::filled(
+        columns * (room_w + 1) + 1,
+        rows * (room_h + 1) + 1,
+        Tile::Wall,
+    );
+    let count = columns * rows;
+    let mut families = vec![Family::MixedCrossing];
+    if count > 2 {
+        families.push(Family::TouchRun);
     }
+    let mut transports = [
+        Family::Switchback,
+        Family::IslandReturn,
+        Family::LoopChain,
+        Family::RewardPocket,
+    ];
+    transports.shuffle(rng);
+    families.extend(transports.into_iter().take(count - families.len()));
     families.shuffle(rng);
+    let mut pieces = Vec::new();
     for row in 0..rows {
         for column in 0..columns {
-            let piece = pieces::make(room_w, room_h, families[row * columns + column], rng);
+            let mut required = Vec::new();
+            if column > 0 {
+                required.push(Direction::Left);
+            }
+            if column + 1 < columns {
+                required.push(Direction::Right);
+            }
+            if row > 0 {
+                required.push(Direction::Up);
+            }
+            if row + 1 < rows {
+                required.push(Direction::Down);
+            }
+            let piece = pieces::make(
+                room_w,
+                room_h,
+                families[row * columns + column],
+                &required,
+                rng,
+            );
+            let origin = Pos {
+                x: 1 + column * (room_w + 1),
+                y: 1 + row * (room_h + 1),
+            };
             for y in 0..room_h {
                 for x in 0..room_w {
                     board.set(
                         Pos {
-                            x: 1 + column * (room_w + 1) + x,
-                            y: 1 + row * (room_h + 1) + y,
+                            x: origin.x + x,
+                            y: origin.y + y,
                         },
-                        piece.get(Pos { x, y }),
+                        piece.board.get(Pos { x, y }),
                     );
                 }
             }
+            pieces.push(piece);
         }
     }
+    let port = |column: usize, row: usize, side: Direction| {
+        let local = pieces[row * columns + column]
+            .ports
+            .iter()
+            .find(|p| p.direction == side)
+            .expect("selected template has the required port")
+            .pos;
+        Pos {
+            x: 1 + column * (room_w + 1) + local.x,
+            y: 1 + row * (room_h + 1) + local.y,
+        }
+    };
     for row in 0..rows {
         for column in 0..columns {
-            // Every region joins a previous region, forming a spanning tree.
+            // A spanning tree connects every piece; optional joins create loops.
             let join_left = column > 0 && (row == 0 || rng.gen_bool(0.5));
             let join_up = row > 0 && !join_left;
             if column > 0 && (join_left || rng.gen_bool(0.25)) {
-                let port = Pos {
-                    x: column * (room_w + 1),
-                    y: 1 + row * (room_h + 1) + rng.gen_range(0..room_h),
-                };
-                connect(&mut board, port, (1, 0), room_w, room_h);
+                connect(
+                    &mut board,
+                    port(column - 1, row, Direction::Right),
+                    port(column, row, Direction::Left),
+                    true,
+                );
             }
             if row > 0 && (join_up || rng.gen_bool(0.25)) {
-                let port = Pos {
-                    x: 1 + column * (room_w + 1) + rng.gen_range(0..room_w),
-                    y: row * (room_h + 1),
-                };
-                connect(&mut board, port, (0, 1), room_w, room_h);
+                connect(
+                    &mut board,
+                    port(column, row - 1, Direction::Down),
+                    port(column, row, Direction::Up),
+                    false,
+                );
             }
         }
     }
     board
 }
 
-fn connect(board: &mut Board, port: Pos, (dx, dy): (isize, isize), room_w: usize, room_h: usize) {
-    board.set(port, Tile::Floor);
-    for sign in [-1, 1] {
-        let mut pos = Pos {
-            x: port.x.checked_add_signed(dx * sign).unwrap(),
-            y: port.y.checked_add_signed(dy * sign).unwrap(),
-        };
-        let left = 1 + (pos.x - 1) / (room_w + 1) * (room_w + 1);
-        let top = 1 + (pos.y - 1) / (room_h + 1) * (room_h + 1);
-        let target = (top..top + room_h)
-            .flat_map(|y| (left..left + room_w).map(move |x| Pos { x, y }))
-            .filter(|p| board.get(*p) == Tile::Floor)
-            .min_by_key(|p| p.x.abs_diff(pos.x) + p.y.abs_diff(pos.y))
-            .expect("a generated piece has floor");
-        board.set(pos, Tile::Floor);
-        // Carve only inside the neighboring piece, even if the port faces a solid edge.
-        while pos != target {
-            if pos.x != target.x {
-                pos.x = pos
-                    .x
-                    .checked_add_signed(if pos.x < target.x { 1 } else { -1 })
-                    .unwrap();
-            } else {
-                pos.y = pos
-                    .y
-                    .checked_add_signed(if pos.y < target.y { 1 } else { -1 })
-                    .unwrap();
-            }
-            board.set(pos, Tile::Floor);
+fn connect(board: &mut Board, from: Pos, to: Pos, horizontal: bool) {
+    // Only the divider is mutable. Port stubs and every template wall remain intact.
+    if horizontal {
+        let x = (from.x + to.x) / 2;
+        for y in from.y.min(to.y)..=from.y.max(to.y) {
+            board.set(Pos { x, y }, Tile::Floor);
+        }
+    } else {
+        let y = (from.y + to.y) / 2;
+        for x in from.x.min(to.x)..=from.x.max(to.x) {
+            board.set(Pos { x, y }, Tile::Floor);
         }
     }
 }
@@ -376,6 +335,20 @@ mod tests {
                 assert!(stage.pars.full_clear_minimum >= stage.pars.any_percent_minimum);
                 let mut game = crate::model::Game::new(stage.board, stage.start);
                 for direction in path {
+                    use crate::model::SpikePhase;
+                    for _ in 0..70 {
+                        game.tick();
+                    }
+                    for _ in 0..100 {
+                        let before = game.spike_phase();
+                        game.tick();
+                        if before == SpikePhase::Active
+                            && game.spike_phase() == SpikePhase::Retracted
+                        {
+                            break;
+                        }
+                    }
+                    assert_eq!(game.outcome, crate::model::Outcome::Playing);
                     game.launch(direction);
                     while game.direction.is_some() {
                         game.tick();
@@ -392,32 +365,41 @@ mod tests {
         }
     }
     #[test]
-    fn useful_rooms_rejects_a_missing_section_but_allows_small_pockets() {
-        let mut board = Board::filled(17, 13, Tile::Wall);
-        let mut floors = HashSet::new();
-        for top in [1, 7] {
-            for left in [1, 9] {
-                for y in top..top + 5 {
-                    for x in left..left + 7 {
-                        let pos = Pos { x, y };
-                        board.set(pos, Tile::Floor);
-                        floors.insert(pos);
-                    }
+    fn connectors_preserve_every_template_cell_in_both_orientations() {
+        for horizontal in [true, false] {
+            let mut board = Board::filled(9, 9, Tile::Coin);
+            for offset in 0..9 {
+                board.set(
+                    if horizontal {
+                        Pos { x: 4, y: offset }
+                    } else {
+                        Pos { x: offset, y: 4 }
+                    },
+                    Tile::Wall,
+                );
+            }
+            let original = board.clone();
+            let (from, to) = if horizontal {
+                (Pos { x: 3, y: 2 }, Pos { x: 5, y: 6 })
+            } else {
+                (Pos { x: 2, y: 3 }, Pos { x: 6, y: 5 })
+            };
+            connect(&mut board, from, to, horizontal);
+            for y in 0..9 {
+                for x in 0..9 {
+                    let pos = Pos { x, y };
+                    let (divider, along) = if horizontal { (x == 4, y) } else { (y == 4, x) };
+                    assert_eq!(
+                        board.get(pos),
+                        if divider && (2..=6).contains(&along) {
+                            Tile::Floor
+                        } else {
+                            original.get(pos)
+                        }
+                    );
                 }
             }
         }
-        let mut reachable = floors.clone();
-        reachable.retain(|p| p.x >= 9 || p.y >= 7);
-        assert!(!useful_rooms(&board, &reachable, Difficulty::Normal));
-        for pos in [
-            Pos { x: 1, y: 1 },
-            Pos { x: 9, y: 1 },
-            Pos { x: 1, y: 7 },
-            Pos { x: 9, y: 7 },
-        ] {
-            floors.remove(&pos);
-        }
-        assert!(useful_rooms(&board, &floors, Difficulty::Normal));
     }
     #[test]
     fn exhausted_budget_returns_replayable_error() {

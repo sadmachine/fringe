@@ -99,9 +99,7 @@ impl App {
                     }
                     return false;
                 }
-                let moving = run.game.direction.is_some();
-                run.game.tick();
-                return moving;
+                return run.game.tick();
             }
         }
         false
@@ -233,5 +231,74 @@ mod tests {
         app.handle(Action::Start);
         assert_eq!(playing(&app).stage.seed, 8);
         assert_eq!(playing(&app).game.outcome, Outcome::Playing);
+    }
+
+    #[test]
+    fn idle_hazards_redraw_and_pause_and_retry_preserve_timing_rules() {
+        use crate::model::SpikePhase;
+
+        let mut app = App::new(42, Difficulty::Easy);
+        app.handle(Action::Start);
+        for _ in 0..59 {
+            assert!(!app.tick());
+        }
+        assert!(app.tick(), "idle warning must redraw");
+        assert_eq!(playing(&app).game.spike_phase(), SpikePhase::Warning);
+        app.handle(Action::Pause);
+        for _ in 0..100 {
+            assert!(!app.tick());
+        }
+        assert_eq!(playing(&app).game.spike_phase(), SpikePhase::Warning);
+        app.handle(Action::Pause);
+        for _ in 0..19 {
+            assert!(!app.tick());
+        }
+        assert!(app.tick(), "idle activation must redraw");
+        assert_eq!(playing(&app).game.spike_phase(), SpikePhase::Active);
+        app.handle(Action::Retry);
+        assert_eq!(playing(&app).game.spike_phase(), SpikePhase::Retracted);
+        assert_eq!(playing(&app).game.slides, 0);
+    }
+
+    #[test]
+    fn pause_freezes_an_armed_touch_trap_and_retry_resets_it() {
+        use crate::model::{Board, Pos, SpikePhase, Tile};
+
+        let mut app = App::new(42, Difficulty::Easy);
+        app.handle(Action::Start);
+        let trap = Pos { x: 2, y: 1 };
+        if let Screen::Playing(run) = &mut app.screen {
+            let mut board = Board::filled(5, 3, Tile::Wall);
+            board.set(Pos { x: 1, y: 1 }, Tile::Floor);
+            board.set(trap, Tile::TouchTrap);
+            board.set(Pos { x: 3, y: 1 }, Tile::Floor);
+            run.game = Game::new(board, Pos { x: 1, y: 1 });
+        }
+        app.handle(Action::Move(Direction::Right));
+        app.tick();
+        app.tick();
+        app.handle(Action::Pause);
+        for _ in 0..100 {
+            app.tick();
+        }
+        assert_eq!(playing(&app).game.spike_phase_at(trap), SpikePhase::Warning);
+        app.handle(Action::Pause);
+        for _ in 0..48 {
+            app.tick();
+        }
+        assert_eq!(playing(&app).game.spike_phase_at(trap), SpikePhase::Warning);
+        app.tick();
+        assert_eq!(playing(&app).game.spike_phase_at(trap), SpikePhase::Active);
+        app.handle(Action::Retry);
+        let run = playing(&app);
+        for y in 0..run.game.board.height {
+            for x in 0..run.game.board.width {
+                let pos = Pos { x, y };
+                if run.game.board.get(pos) == Tile::TouchTrap {
+                    assert_eq!(run.game.spike_phase_at(pos), SpikePhase::Retracted);
+                }
+            }
+        }
+        assert_eq!(run.game.slides, 0);
     }
 }
