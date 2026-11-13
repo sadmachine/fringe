@@ -448,6 +448,71 @@ fn place_run(board: &mut Board, lane: &[Pos], tile: Tile, rng: &mut impl Rng) {
     }
 }
 
+fn mixed_crossing(width: usize, height: usize, rng: &mut impl Rng) -> Piece {
+    let (left, right, top, bottom) = (1, width - 2, 1, height - 2);
+    let middle = rng.gen_range(3..=height - 4);
+    let from = rng.gen_range(2..=(width - 5).min(3));
+    let to = rng.gen_range((from + 2).max(4)..=width - 3);
+    // Offset turns on opposite sides of the loop can both be reached without a
+    // shield. Vertical arrivals stop at these turns; horizontal travel between
+    // them is an optional fixed-spike bridge, with safe floor at both ends.
+    let corners = [
+        Pos { x: from, y: top },
+        Pos { x: right, y: top },
+        Pos {
+            x: right,
+            y: middle,
+        },
+        Pos { x: to, y: middle },
+        Pos { x: to, y: bottom },
+        Pos { x: left, y: bottom },
+        Pos { x: left, y: middle },
+        Pos { x: from, y: middle },
+    ];
+    let mut board = Board::filled(width, height, Tile::Wall);
+    for i in 0..corners.len() {
+        line(&mut board, corners[i], corners[(i + 1) % corners.len()]);
+    }
+    let ports = vec![
+        Port {
+            pos: Pos { x: 0, y: bottom },
+            direction: Direction::Left,
+        },
+        Port {
+            pos: Pos { x: from, y: 0 },
+            direction: Direction::Up,
+        },
+        Port {
+            pos: Pos {
+                x: width - 1,
+                y: top,
+            },
+            direction: Direction::Right,
+        },
+        Port {
+            pos: Pos {
+                x: to,
+                y: height - 1,
+            },
+            direction: Direction::Down,
+        },
+    ];
+    for (port, corner) in ports
+        .iter()
+        .zip([corners[5], corners[0], corners[1], corners[4]])
+    {
+        line(&mut board, port.pos, corner);
+    }
+    for x in from + 1..to {
+        board.set(Pos { x, y: middle }, Tile::Spike);
+    }
+    let pulse: Vec<_> = (from + 1..right).map(|x| Pos { x, y: top }).collect();
+    let touch: Vec<_> = (left + 1..to).map(|x| Pos { x, y: bottom }).collect();
+    place_run(&mut board, &pulse, Tile::TimedSpike, rng);
+    place_run(&mut board, &touch, Tile::TouchTrap, rng);
+    Piece { board, ports }
+}
+
 fn build(width: usize, height: usize, family: Family, rng: &mut impl Rng) -> Piece {
     match family {
         Family::Switchback => switchback(width, height, rng),
@@ -488,44 +553,7 @@ fn build(width: usize, height: usize, family: Family, rng: &mut impl Rng) -> Pie
             );
             piece
         }
-        Family::MixedCrossing => {
-            let horizontal = width > height;
-            let (left, right) = if horizontal {
-                (1, width - 2)
-            } else {
-                (rng.gen_range(1..=2), width - 1 - rng.gen_range(1..=2))
-            };
-            let (top, bottom) = if horizontal {
-                (rng.gen_range(1..=2), height - 1 - rng.gen_range(1..=2))
-            } else {
-                (1, height - 2)
-            };
-            let mut piece = ring(width, height, left, top, right, bottom);
-            let first: Vec<_> = if horizontal {
-                (left + 1..right).map(|x| Pos { x, y: top }).collect()
-            } else {
-                (top + 1..bottom).map(|y| Pos { x: left, y }).collect()
-            };
-            let second: Vec<_> = if horizontal {
-                (left + 1..right).map(|x| Pos { x, y: bottom }).collect()
-            } else {
-                (top + 1..bottom).map(|y| Pos { x: right, y }).collect()
-            };
-            place_run(&mut piece.board, &first, Tile::TimedSpike, rng);
-            place_run(&mut piece.board, &second, Tile::TouchTrap, rng);
-            // Fixed spikes form a face of the internal island, leaving its
-            // surrounding travel lanes and corner stops intact.
-            for offset in 1..=2 {
-                piece.board.set(
-                    Pos {
-                        x: left + if horizontal { offset } else { 1 },
-                        y: top + if horizontal { 1 } else { offset },
-                    },
-                    Tile::Spike,
-                );
-            }
-            piece
-        }
+        Family::MixedCrossing => mixed_crossing(width, height, rng),
     }
 }
 
@@ -542,6 +570,36 @@ mod tests {
 
     fn traversable(tile: Tile) -> bool {
         !matches!(tile, Tile::Wall | Tile::Spike)
+    }
+
+    #[test]
+    fn mixed_crossing_has_a_shield_shortcut_and_a_shield_free_return() {
+        for seed in 0..10 {
+            let piece = build(
+                9,
+                7,
+                Family::MixedCrossing,
+                &mut ChaCha8Rng::seed_from_u64(seed),
+            );
+            let start = piece
+                .ports
+                .iter()
+                .find(|p| p.direction == Direction::Up)
+                .unwrap()
+                .pos;
+            let exit = piece
+                .ports
+                .iter()
+                .find(|p| p.direction == Direction::Right)
+                .unwrap()
+                .pos;
+            let mut board = piece.board;
+            board.set(exit, Tile::Exit);
+            let baseline = solver::analyze(&board, start).solution.unwrap().len();
+            board.set(Pos { x: start.x, y: 1 }, Tile::Shield);
+            let analysis = solver::analyze(&board, start);
+            assert!(analysis.solution.unwrap().len() < baseline);
+        }
     }
 
     #[test]

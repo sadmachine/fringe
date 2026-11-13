@@ -1,11 +1,15 @@
-use crate::model::{Board, Direction, Pos, Step, Tile, SPIKE_RETRACTED_TICKS, TOUCH_DELAY_TICKS};
+use crate::model::{
+    Board, Direction, Pos, Shield, Step, Tile, SPIKE_RETRACTED_TICKS, TOUCH_DELAY_TICKS,
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 pub(super) struct Analysis {
     pub distances: Vec<Option<usize>>,
     pub solution: Option<Vec<Direction>>,
     pub safe_cells: HashSet<Pos>,
+    pub safe_stops: HashSet<Pos>,
     slides: Vec<Slide>,
+    state_count: usize,
 }
 
 impl Analysis {
@@ -24,7 +28,7 @@ impl Analysis {
         let resting: HashSet<_> = self
             .slides
             .iter()
-            .filter_map(|s| s.to)
+            .filter_map(|s| s.to.map(|to| to % board.tiles.len()))
             .chain(Some(start.y * board.width + start.x))
             .collect();
         board.tiles.iter().enumerate().all(|(index, tile)| {
@@ -43,6 +47,25 @@ struct Slide {
     to: Option<usize>,
     cells: Vec<Pos>,
     direction: Direction,
+}
+
+#[derive(Clone, Copy)]
+enum Pickup {
+    Available,
+    Armed,
+    Spent,
+}
+
+#[derive(Clone, Copy)]
+struct State {
+    pos: Pos,
+    pickup: Pickup,
+}
+
+impl State {
+    fn index(self, board: &Board) -> usize {
+        self.pickup as usize * board.tiles.len() + self.pos.y * board.width + self.pos.x
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -99,7 +122,7 @@ pub(super) fn full_clear(
         rewards: Vec<u64>,
         direction: Direction,
     }
-    let mut moves: Vec<Vec<Move>> = (0..board.tiles.len()).map(|_| Vec::new()).collect();
+    let mut moves: Vec<Vec<Move>> = (0..analysis.state_count).map(|_| Vec::new()).collect();
     let mut before_exit = vec![0; words];
     for slide in &analysis.slides {
         let mut rewards = vec![0u64; words];
@@ -143,7 +166,7 @@ pub(super) fn full_clear(
         rewards: vec![0; words],
         previous: None,
     }];
-    let mut visited = vec![Vec::new(); board.tiles.len()];
+    let mut visited = vec![Vec::new(); analysis.state_count];
     visited[start_index].push(0);
     let mut cursor = 0;
     while cursor < nodes.len() {
@@ -201,41 +224,68 @@ fn contains(have: &[u64], required: &[u64]) -> bool {
 pub(super) fn analyze(board: &Board, start: Pos) -> Analysis {
     let index = |p: Pos| p.y * board.width + p.x;
     let count = board.tiles.len();
+    // Stages contain at most one pickup. Inventory is part of each graph vertex,
+    // so backtracking can neither respawn it nor merge armed and spent routes.
+    let state_count = count
+        * if board.tiles.contains(&Tile::Shield) {
+            3
+        } else {
+            1
+        };
     let mut distances = vec![None; count];
-    let mut resting_distance = vec![None; count];
-    let mut parents: Vec<Option<(Pos, Direction)>> = vec![None; count];
+    let mut resting_distance = vec![None; state_count];
+    let mut parents: Vec<Option<(State, Direction)>> = vec![None; state_count];
+    let start = State {
+        pos: start,
+        pickup: Pickup::Available,
+    };
     let mut queue = VecDeque::from([start]);
-    distances[index(start)] = Some(0);
-    resting_distance[index(start)] = Some(0);
+    distances[index(start.pos)] = Some(0);
+    resting_distance[start.index(board)] = Some(0);
     // None is the terminal exit; lethal and stationary moves produce no edge.
     let mut edges = Vec::new();
     let mut solution = None;
     while let Some(from) = queue.pop_front() {
-        let depth = resting_distance[index(from)].unwrap() + 1;
+        let depth = resting_distance[from.index(board)].unwrap() + 1;
         for direction in Direction::ALL {
-            let mut pos = from;
+            let mut pos = from.pos;
+            let mut pickup = from.pickup;
+            let mut shield = if matches!(pickup, Pickup::Armed) {
+                Shield::Armed
+            } else {
+                Shield::Empty
+            };
             let mut cells = Vec::new();
             let mut won = false;
             let mut died = false;
             loop {
                 match board.step(pos, direction) {
                     Step::Blocked => break,
-                    Step::Died(_) => {
-                        died = true;
-                        break;
-                    }
                     Step::Cleared(next) => {
                         cells.push(next);
                         won = true;
                         break;
                     }
-                    Step::Moved(next) => {
+                    Step::Moved(next) | Step::Died(next) => {
+                        if board.get(next) == Tile::Shield && matches!(pickup, Pickup::Available) {
+                            pickup = Pickup::Armed;
+                            shield = Shield::Armed;
+                        }
+                        if board.get(next) == Tile::Spike {
+                            if !shield.absorb() {
+                                died = true;
+                                break;
+                            }
+                            pickup = Pickup::Spent;
+                        }
                         pos = next;
                         cells.push(next);
                     }
                 }
             }
-            if died || cells.is_empty() {
+            // Protection ends with a slide; stopping on fixed spikes would die
+            // on the next tick before another command could move the player.
+            if died || cells.is_empty() || (!won && board.get(pos) == Tile::Spike) {
                 continue;
             }
             for cell in &cells {
@@ -244,9 +294,10 @@ pub(super) fn analyze(board: &Board, start: Pos) -> Analysis {
                     *distance = Some(depth);
                 }
             }
-            let end = if won { None } else { Some(index(pos)) };
+            let to = State { pos, pickup };
+            let end = if won { None } else { Some(to.index(board)) };
             edges.push(Slide {
-                from: index(from),
+                from: from.index(board),
                 to: end,
                 cells,
                 direction,
@@ -255,22 +306,22 @@ pub(super) fn analyze(board: &Board, start: Pos) -> Analysis {
                 if solution.is_none() {
                     let mut path = vec![direction];
                     let mut cursor = from;
-                    while let Some((previous, direction)) = parents[index(cursor)] {
+                    while let Some((previous, direction)) = parents[cursor.index(board)] {
                         path.push(direction);
                         cursor = previous;
                     }
                     path.reverse();
                     solution = Some(path);
                 }
-            } else if resting_distance[index(pos)].is_none() {
-                resting_distance[index(pos)] = Some(depth);
-                parents[index(pos)] = Some((from, direction));
-                queue.push_back(pos);
+            } else if resting_distance[to.index(board)].is_none() {
+                resting_distance[to.index(board)] = Some(depth);
+                parents[to.index(board)] = Some((from, direction));
+                queue.push_back(to);
             }
         }
     }
-    let mut reverse = vec![Vec::new(); count];
-    let mut can_win = vec![false; count];
+    let mut reverse = vec![Vec::new(); state_count];
+    let mut can_win = vec![false; state_count];
     let mut queue = VecDeque::new();
     for edge in &edges {
         if let Some(to) = edge.to {
@@ -289,15 +340,32 @@ pub(super) fn analyze(board: &Board, start: Pos) -> Analysis {
         }
     }
     let mut safe_cells = HashSet::new();
-    if can_win[index(start)] {
-        safe_cells.insert(start);
+    let safe_stops = edges
+        .iter()
+        .filter_map(|edge| {
+            edge.to.filter(|to| can_win[*to]).map(|to| {
+                let cell = to % count;
+                Pos {
+                    x: cell % board.width,
+                    y: cell / board.width,
+                }
+            })
+        })
+        .collect();
+    if can_win[start.index(board)] {
+        safe_cells.insert(start.pos);
     }
     for edge in &edges {
         if edge.to.is_none() || edge.to.is_some_and(|to| can_win[to]) {
             safe_cells.extend(edge.cells.iter().copied().filter(|p| {
                 matches!(
                     board.get(*p),
-                    Tile::Floor | Tile::Dot | Tile::Coin | Tile::TimedSpike | Tile::TouchTrap
+                    Tile::Floor
+                        | Tile::Dot
+                        | Tile::Coin
+                        | Tile::Shield
+                        | Tile::TimedSpike
+                        | Tile::TouchTrap
                 )
             }));
         }
@@ -306,7 +374,9 @@ pub(super) fn analyze(board: &Board, start: Pos) -> Analysis {
         distances,
         solution,
         safe_cells,
+        safe_stops,
         slides: edges,
+        state_count,
     }
 }
 
@@ -327,6 +397,7 @@ mod tests {
                         'E' => Tile::Exit,
                         '.' => Tile::Dot,
                         '$' => Tile::Coin,
+                        'S' => Tile::Shield,
                         'T' => Tile::TimedSpike,
                         'H' => Tile::TouchTrap,
                         _ => Tile::Floor,
@@ -340,6 +411,150 @@ mod tests {
     fn collection(rows: &[&str], start: Pos) -> Result<Vec<Direction>, CollectionError> {
         let board = board(rows);
         full_clear(&board, start, &analyze(&board, start), 50_000)
+    }
+
+    #[test]
+    fn shield_shortcut_changes_both_exact_minimums() {
+        let b = board(&["########", "# S^^$E#", "########"]);
+        let start = Pos { x: 1, y: 1 };
+        let analysis = analyze(&b, start);
+        assert_eq!(analysis.solution, Some(vec![Direction::Right]));
+        assert!(analysis.safe_cells.contains(&Pos { x: 2, y: 1 }));
+        assert_eq!(
+            full_clear(&b, start, &analysis, 50_000),
+            Ok(vec![Direction::Right])
+        );
+        let mut game = crate::model::Game::new(b, start);
+        game.launch(Direction::Right);
+        while game.direction.is_some() {
+            game.tick();
+        }
+        assert_eq!(game.outcome, crate::model::Outcome::Cleared);
+        assert_eq!(game.score, 10);
+    }
+
+    #[test]
+    fn shield_must_be_picked_up_before_the_hit_and_cannot_end_on_fixed_spikes() {
+        let start = Pos { x: 1, y: 1 };
+        for rows in [
+            vec!["#######", "# ^S E#", "#######"],
+            vec!["#######", "# S  ^#", "#####E#", "#######"],
+        ] {
+            assert!(analyze(&board(&rows), start).solution.is_none());
+        }
+    }
+
+    #[test]
+    fn one_shield_cannot_pay_for_separate_crossings() {
+        let b = board(&["#######", "# S^$ #", "#E### #", "# $^$ #", "#######"]);
+        let start = Pos { x: 1, y: 1 };
+        let analysis = analyze(&b, start);
+        assert_eq!(analysis.solution, Some(vec![Direction::Down]));
+        assert!(!analysis.safe_cells.contains(&Pos { x: 4, y: 1 }));
+        assert_eq!(
+            full_clear(&b, start, &analysis, 50_000),
+            Err(CollectionError::Impossible)
+        );
+    }
+
+    #[test]
+    fn shield_minimums_match_exhaustive_game_play_on_small_boards() {
+        use crate::model::{Game, Outcome};
+        use rand::{Rng, SeedableRng};
+        use rand_chacha::ChaCha8Rng;
+
+        // This oracle executes Game ticks rather than using the slide graph or
+        // its reward grouping. Remaining board cells identify one-time pickups.
+        fn oracle(board: Board, start: Pos) -> (Option<usize>, Option<usize>) {
+            let mut queue = VecDeque::from([(Game::new(board, start), 0)]);
+            let mut visited = HashSet::new();
+            let mut any = None;
+            while let Some((from, depth)) = queue.pop_front() {
+                for direction in Direction::ALL {
+                    let mut game = Game::new(from.board.clone(), from.player);
+                    game.shield = from.shield;
+                    game.launch(direction);
+                    if game.slides == 0 {
+                        continue;
+                    }
+                    while game.direction.is_some() {
+                        game.tick();
+                    }
+                    // A shielded slide that stops on fixed spikes cannot leave
+                    // before the next damage check, even with immediate input.
+                    game.tick();
+                    if game.outcome == Outcome::Died {
+                        continue;
+                    }
+                    if game.outcome == Outcome::Cleared {
+                        any.get_or_insert(depth + 1);
+                        if !game
+                            .board
+                            .tiles
+                            .iter()
+                            .any(|t| matches!(t, Tile::Dot | Tile::Coin))
+                        {
+                            return (any, Some(depth + 1));
+                        }
+                        continue;
+                    }
+                    let remaining: Vec<_> = game
+                        .board
+                        .tiles
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, t)| matches!(t, Tile::Dot | Tile::Coin | Tile::Shield))
+                        .map(|(i, _)| i)
+                        .collect();
+                    if visited.insert((game.player, game.shield == Shield::Armed, remaining)) {
+                        queue.push_back((game, depth + 1));
+                    }
+                }
+            }
+            (any, None)
+        }
+
+        let start = Pos { x: 1, y: 1 };
+        for seed in 0..100 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let mut b = Board::filled(7, 5, Tile::Wall);
+            for y in 1..4 {
+                for x in 1..6 {
+                    b.set(
+                        Pos { x, y },
+                        match rng.gen_range(0..10) {
+                            0..=1 => Tile::Wall,
+                            2..=3 => Tile::Spike,
+                            4..=5 => Tile::Dot,
+                            _ => Tile::Floor,
+                        },
+                    );
+                }
+            }
+            b.set(start, Tile::Floor);
+            b.set(Pos { x: 5, y: 3 }, Tile::Exit);
+            b.set(
+                Pos {
+                    x: rng.gen_range(2..5),
+                    y: rng.gen_range(1..4),
+                },
+                Tile::Shield,
+            );
+            let expected = oracle(b.clone(), start);
+            let analysis = analyze(&b, start);
+            assert_eq!(
+                analysis.solution.as_ref().map(Vec::len),
+                expected.0,
+                "ANY% seed {seed}"
+            );
+            let full = full_clear(&b, start, &analysis, 50_000);
+            assert_ne!(full, Err(CollectionError::BudgetExceeded));
+            assert_eq!(
+                full.ok().map(|path| path.len()),
+                expected.1,
+                "100% seed {seed}"
+            );
+        }
     }
 
     #[test]

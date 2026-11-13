@@ -7,7 +7,7 @@ use crossterm::{
 use fringe::{
     app::{App, Run, Screen, CELEBRATION_TICKS},
     generator::Difficulty,
-    model::{Board, Outcome, Pos, SpikePhase, Tile},
+    model::{Board, Outcome, Pos, Shield, SpikePhase, Tile},
 };
 use std::io::{self, Write};
 
@@ -47,8 +47,21 @@ const PULSE_MOUNT: Color = Color::Rgb {
     g: 166,
     b: 73,
 };
+const GREEN: Color = Color::Rgb {
+    r: 116,
+    g: 245,
+    b: 160,
+};
 const PLAYER_STYLE: (Color, Color, &str) = (BACKGROUND, GOLD, "oo");
 type Style = (Color, Color, &'static str);
+
+fn player_style(shield: Shield) -> Style {
+    match shield {
+        Shield::Empty => PLAYER_STYLE,
+        Shield::Armed => (BACKGROUND, GREEN, "OO"),
+        Shield::Breaking => (BACKGROUND, GREEN, "**"),
+    }
+}
 
 fn tile_style(tile: Tile, phase: SpikePhase) -> Style {
     match tile {
@@ -56,6 +69,7 @@ fn tile_style(tile: Tile, phase: SpikePhase) -> Style {
         Tile::Floor => (BACKGROUND, BACKGROUND, "  "),
         Tile::Dot => (CYAN, BACKGROUND, ". "),
         Tile::Coin => (GOLD, BACKGROUND, "$ "),
+        Tile::Shield => (GREEN, BACKGROUND, "{}"),
         Tile::Spike => (BACKGROUND, PINK, "/\\"),
         Tile::TimedSpike => match phase {
             SpikePhase::Retracted => (INK, BACKGROUND, "=="),
@@ -153,17 +167,18 @@ fn legend(out: &mut impl Write, width: u16, y: u16, phase: SpikePhase) -> io::Re
         (tile_style(Tile::Spike, phase), " spikes"),
         (tile_style(Tile::TimedSpike, phase), " pulse"),
         (tile_style(Tile::TouchTrap, SpikePhase::Retracted), " touch"),
+        (tile_style(Tile::Shield, phase), "shield"),
         (tile_style(Tile::Exit, phase), " exit"),
     ];
     let length = entries
         .iter()
         .map(|((_, _, glyph), label)| glyph.len() + label.len())
         .sum::<usize>()
-        + (entries.len() - 1) * 3;
+        + (entries.len() - 1) * 2;
     queue!(out, MoveTo(width.saturating_sub(length as u16) / 2, y))?;
     for (index, ((fg, bg, glyph), label)) in entries.into_iter().enumerate() {
         if index > 0 {
-            queue!(out, Print("   "))?;
+            queue!(out, Print("  "))?;
         }
         paint(out, (fg, bg, glyph))?;
         queue!(
@@ -176,12 +191,44 @@ fn legend(out: &mut impl Write, width: u16, y: u16, phase: SpikePhase) -> io::Re
     Ok(())
 }
 
+fn objective_result(
+    label: &str,
+    slides: Option<usize>,
+    par: usize,
+    minimum: usize,
+) -> (Color, String) {
+    let (actual, par_result, minimum_result, color) = if let Some(slides) = slides {
+        let compare = |target| {
+            let sign = if slides < target { '-' } else { '+' };
+            format!("{target} ({sign}{})", slides.abs_diff(target))
+        };
+        (
+            slides.to_string(),
+            compare(par),
+            compare(minimum),
+            if slides == minimum {
+                GREEN
+            } else if slides <= par {
+                GOLD
+            } else {
+                INK
+            },
+        )
+    } else {
+        ("--".into(), par.to_string(), minimum.to_string(), MUTED)
+    };
+    (
+        color,
+        format!("{label:<5} {actual:>10}   {par_result:<16}  {minimum_result:<16}"),
+    )
+}
+
 fn stage_clear(out: &mut impl Write, run: &Run, width: u16, top: u16) -> io::Result<()> {
-    let panel_width = 54;
+    let panel_width = 70;
     let left = (width - panel_width) / 2;
-    let panel_top = top + 7;
+    let panel_top = top + 4;
     // Cover the maze so the result reads as a new state, even without animation.
-    for row in 0..11 {
+    for row in 0..17 {
         queue!(
             out,
             MoveTo(left, panel_top + row),
@@ -189,7 +236,7 @@ fn stage_clear(out: &mut impl Write, run: &Run, width: u16, top: u16) -> io::Res
             SetBackgroundColor(BACKGROUND),
             Print(if row == 0 {
                 format!("╔{}╗", "═".repeat(panel_width as usize - 2))
-            } else if row == 10 {
+            } else if row == 16 {
                 format!("╚{}╝", "═".repeat(panel_width as usize - 2))
             } else {
                 format!("║{}║", " ".repeat(panel_width as usize - 2))
@@ -209,26 +256,101 @@ fn stage_clear(out: &mut impl Write, run: &Run, width: u16, top: u16) -> io::Res
     center(
         out,
         width,
-        panel_top + 3,
+        panel_top + 2,
         GOLD,
         "* * *   STAGE CLEAR!   * * *",
     )?;
     center(
         out,
         width,
-        panel_top + 5,
+        panel_top + 4,
         INK,
         &format!("SCORE {:04}     SLIDES {}", run.game.score, run.game.slides),
     )?;
-    center(out, width, panel_top + 7, GOLD, "Enter / N  next stage")?;
+    let count = |board: &Board, tile| board.tiles.iter().filter(|t| **t == tile).count();
+    let dots = count(&run.stage.board, Tile::Dot);
+    let coins = count(&run.stage.board, Tile::Coin);
+    let remaining_dots = count(&run.game.board, Tile::Dot);
+    let remaining_coins = count(&run.game.board, Tile::Coin);
+    let full_clear = remaining_dots == 0 && remaining_coins == 0;
     center(
         out,
         width,
-        panel_top + 8,
+        panel_top + 5,
+        CYAN,
+        &format!(
+            "DOTS {}/{}    COINS {}/{}",
+            dots - remaining_dots,
+            dots,
+            coins - remaining_coins,
+            coins
+        ),
+    )?;
+    center(
+        out,
+        width,
+        panel_top + 7,
+        MUTED,
+        &format!(
+            "{:<5} {:>10}   {:<16}  {:<16}",
+            "GOAL", "SLIDES", "PAR", "MIN"
+        ),
+    )?;
+    let slides = run.game.slides as usize;
+    for (row, (color, text)) in [
+        objective_result(
+            "ANY%",
+            Some(slides),
+            run.stage.pars.any_percent(),
+            run.stage.pars.any_percent_minimum,
+        ),
+        objective_result(
+            "100%",
+            full_clear.then_some(slides),
+            run.stage.pars.full_clear(),
+            run.stage.pars.full_clear_minimum,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        center(out, width, panel_top + 8 + row as u16, color, &text)?;
+    }
+    center(
+        out,
+        width,
+        panel_top + 10,
+        MUTED,
+        "In parentheses: + over target, - under target",
+    )?;
+    let completion = if full_clear {
+        "100% COMPLETE"
+    } else {
+        "100% NOT COMPLETED"
+    };
+    let optimal = if full_clear && slides == run.stage.pars.full_clear_minimum {
+        " | OPTIMAL 100%"
+    } else if slides == run.stage.pars.any_percent_minimum {
+        " | OPTIMAL ANY%"
+    } else {
+        ""
+    };
+    center(
+        out,
+        width,
+        panel_top + 11,
+        if full_clear { GREEN } else { MUTED },
+        &format!("{completion}{optimal}"),
+    )?;
+    center(out, width, panel_top + 13, GOLD, "Enter / N  next stage")?;
+    center(
+        out,
+        width,
+        panel_top + 14,
         MUTED,
         "R replay    M menu    Q quit",
     )?;
-    center(out, width, panel_top + 9, CYAN, sparkles)
+    center(out, width, panel_top + 15, CYAN, sparkles)
 }
 
 pub fn draw(out: &mut impl Write, app: &App, size: (u16, u16)) -> io::Result<()> {
@@ -320,7 +442,16 @@ pub fn draw(out: &mut impl Write, app: &App, size: (u16, u16)) -> io::Result<()>
                     width,
                     top + 2,
                     INK,
-                    &format!("SCORE {:04}   SLIDES {}", game.score, game.slides),
+                    &format!(
+                        "SCORE {:04}   SLIDES {}   SHIELD {}",
+                        game.score,
+                        game.slides,
+                        match game.shield {
+                            Shield::Empty => "--",
+                            Shield::Armed => "ARMED",
+                            Shield::Breaking => "BREAKING",
+                        }
+                    ),
                 )?;
                 let targets = [
                     (
@@ -356,7 +487,7 @@ pub fn draw(out: &mut impl Write, app: &App, size: (u16, u16)) -> io::Result<()>
                     for x in 0..game.board.width {
                         let pos = Pos { x, y };
                         if game.player == pos {
-                            let (fg, bg, glyph) = PLAYER_STYLE;
+                            let (fg, bg, glyph) = player_style(game.shield);
                             paint(
                                 out,
                                 (
@@ -467,6 +598,169 @@ pub fn draw(out: &mut impl Write, app: &App, size: (u16, u16)) -> io::Result<()>
 mod tests {
     use super::*;
     use fringe::model::Game;
+
+    #[test]
+    fn result_rows_compare_slides_with_par_and_minimum() {
+        for (slides, expected, color) in [
+            (8, "ANY% 8 10 (-2) 8 (+0)", GREEN),
+            (10, "ANY% 10 10 (+0) 8 (+2)", GOLD),
+            (13, "ANY% 13 10 (+3) 8 (+5)", INK),
+        ] {
+            let (actual_color, text) = objective_result("ANY%", Some(slides), 10, 8);
+            assert_eq!(
+                text.split_whitespace().collect::<Vec<_>>().join(" "),
+                expected
+            );
+            assert_eq!(actual_color, color);
+        }
+        let (color, text) = objective_result("100%", None, 18, 14);
+        assert_eq!(
+            text.split_whitespace().collect::<Vec<_>>().join(" "),
+            "100% -- 18 14"
+        );
+        assert_eq!(color, MUTED);
+        for (goal, par, minimum, expected) in [
+            ("ANY%", 15, 12, "ANY% 45 15 (+30) 12 (+33)"),
+            ("100%", 55, 44, "100% 45 55 (-10) 44 (+1)"),
+        ] {
+            let (_, text) = objective_result(goal, Some(45), par, minimum);
+            assert_eq!(
+                text.split_whitespace().collect::<Vec<_>>().join(" "),
+                expected
+            );
+        }
+        let (_, longest) = objective_result("100%", Some(u32::MAX as usize), 10, 8);
+        assert!(
+            longest.chars().count() <= 68,
+            "row must fit inside the result panel"
+        );
+    }
+
+    #[test]
+    fn stage_clear_awards_full_clear_only_when_all_dots_and_coins_were_collected() {
+        use fringe::{
+            generator::{Pars, Stage},
+            model::{Direction, Tile},
+        };
+        let mut board = Board::filled(7, 5, Tile::Wall);
+        for (y, row) in ["#######", "# E $ #", "# ### #", "#  .  #", "#######"]
+            .iter()
+            .enumerate()
+        {
+            for (x, c) in row.chars().enumerate() {
+                board.set(
+                    Pos { x, y },
+                    match c {
+                        ' ' => Tile::Floor,
+                        'E' => Tile::Exit,
+                        '$' => Tile::Coin,
+                        '.' => Tile::Dot,
+                        _ => Tile::Wall,
+                    },
+                );
+            }
+        }
+        let start = Pos { x: 1, y: 1 };
+        for full in [false, true] {
+            let mut run = Run {
+                game: Game::new(board.clone(), start),
+                stage: Stage {
+                    board: board.clone(),
+                    start,
+                    seed: 42,
+                    difficulty: Difficulty::Easy,
+                    pars: Pars {
+                        any_percent_minimum: 1,
+                        full_clear_minimum: 4,
+                    },
+                },
+                paused: false,
+                clear_ticks: CELEBRATION_TICKS,
+            };
+            let path = if full {
+                vec![
+                    Direction::Down,
+                    Direction::Right,
+                    Direction::Up,
+                    Direction::Left,
+                ]
+            } else {
+                vec![Direction::Right]
+            };
+            for direction in path {
+                run.game.launch(direction);
+                while run.game.direction.is_some() {
+                    run.game.tick();
+                }
+            }
+            assert_eq!(run.game.outcome, Outcome::Cleared);
+            let mut output = Vec::new();
+            stage_clear(&mut output, &run, 80, 0).unwrap();
+            let text = String::from_utf8(output).unwrap();
+            if full {
+                assert!(text.contains("DOTS 1/1    COINS 1/1"));
+                assert!(text.contains("100% COMPLETE"));
+                assert!(!text.contains("NOT COMPLETED"));
+            } else {
+                assert!(text.contains("DOTS 0/1    COINS 0/1"));
+                assert!(text.contains("NOT COMPLETED"));
+                assert!(!text.contains("100% COMPLETE"));
+            }
+        }
+    }
+
+    #[test]
+    fn shield_states_have_distinct_player_shapes_and_hud_text() {
+        use fringe::{
+            generator::{Pars, Stage},
+            model::{Direction, Shield},
+        };
+        let mut board = Board::filled(7, 3, Tile::Wall);
+        for x in 1..6 {
+            board.set(Pos { x, y: 1 }, Tile::Floor);
+        }
+        board.set(Pos { x: 2, y: 1 }, Tile::Shield);
+        board.set(Pos { x: 3, y: 1 }, Tile::Spike);
+        let start = Pos { x: 1, y: 1 };
+        let mut app = App::new(42, Difficulty::Easy);
+        app.screen = Screen::Playing(Box::new(Run {
+            game: Game::new(board.clone(), start),
+            stage: Stage {
+                board,
+                start,
+                seed: 42,
+                difficulty: Difficulty::Easy,
+                pars: Pars {
+                    any_percent_minimum: 1,
+                    full_clear_minimum: 1,
+                },
+            },
+            paused: false,
+            clear_ticks: 0,
+        }));
+        for (tick, status, glyph) in [
+            (0, "SHIELD --", "oo"),
+            (1, "SHIELD ARMED", "OO"),
+            (2, "SHIELD BREAKING", "**"),
+            (4, "SHIELD --", "oo"),
+        ] {
+            if let Screen::Playing(run) = &mut app.screen {
+                if tick == 1 {
+                    run.game.launch(Direction::Right);
+                }
+                let steps = if tick == 4 { 2 } else { usize::from(tick > 0) };
+                for _ in 0..steps {
+                    run.game.tick();
+                }
+                assert_eq!(player_style(run.game.shield).2, glyph);
+            }
+            let mut output = Vec::new();
+            draw(&mut output, &app, (80, 24)).unwrap();
+            let text = String::from_utf8(output).unwrap();
+            assert!(text.contains(status), "missing {status}");
+        }
+        assert_ne!(player_style(Shield::Armed), PLAYER_STYLE);
+    }
 
     #[test]
     fn wall_marks_follow_cardinal_neighbors_and_stay_visible_in_every_phase() {

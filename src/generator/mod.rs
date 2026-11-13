@@ -138,6 +138,30 @@ fn generate_with_budget(
                 {
                     continue;
                 }
+                let pickups: Vec<_> = floors
+                    .iter()
+                    .copied()
+                    .filter(|pos| {
+                        *pos != start
+                            && board.get(*pos) == Tile::Floor
+                            && verified.safe_stops.contains(pos)
+                    })
+                    .collect();
+                let Some(&pickup) = pickups.choose(&mut rng) else {
+                    continue;
+                };
+                board.set(pickup, Tile::Shield);
+                // Inventory changes reachable routes, stopping cells, and exact
+                // minimums. Prove the final board, not just its unshielded form.
+                let verified = solver::analyze(&board, start);
+                let Some(ref path) = verified.solution else {
+                    continue;
+                };
+                if !difficulty.slide_range().contains(&path.len())
+                    || !verified.hazards_allow_safe_waits(&board, start)
+                {
+                    continue;
+                }
                 // Iterate in board order, never HashSet order, to preserve seeded replay.
                 let mut reward_number = rng.gen_range(0..10);
                 for y in 1..board.height - 1 {
@@ -320,7 +344,17 @@ mod tests {
         for difficulty in Difficulty::ALL {
             for seed in 0..10 {
                 let stage = generate(seed, difficulty).unwrap();
+                assert_eq!(
+                    stage
+                        .board
+                        .tiles
+                        .iter()
+                        .filter(|tile| **tile == Tile::Shield)
+                        .count(),
+                    1
+                );
                 let analysis = solver::analyze(&stage.board, stage.start);
+                assert!(analysis.hazards_allow_safe_waits(&stage.board, stage.start));
                 let path = solver::full_clear(&stage.board, stage.start, &analysis, 50_000)
                     .unwrap_or_else(|error| panic!("{difficulty} seed {seed}: {error:?}"));
                 assert_eq!(
@@ -405,5 +439,32 @@ mod tests {
     fn exhausted_budget_returns_replayable_error() {
         let error = generate_with_budget(42, Difficulty::Hard, 0).unwrap_err();
         assert!(error.contains("42") && error.contains("hard"));
+    }
+
+    #[test]
+    fn generated_shields_can_open_fixed_spike_shortcuts() {
+        let mut shortcuts = 0;
+        for difficulty in Difficulty::ALL {
+            for seed in 0..20 {
+                let stage = generate(seed, difficulty).unwrap();
+                let mut unshielded = stage.board.clone();
+                for tile in &mut unshielded.tiles {
+                    if *tile == Tile::Shield {
+                        *tile = Tile::Floor;
+                    }
+                }
+                let baseline = solver::analyze(&unshielded, stage.start)
+                    .solution
+                    .unwrap()
+                    .len();
+                if stage.pars.any_percent_minimum < baseline {
+                    shortcuts += 1;
+                }
+            }
+        }
+        assert!(
+            shortcuts > 0,
+            "generated shields should enable real shortcuts"
+        );
     }
 }

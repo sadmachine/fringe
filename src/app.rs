@@ -148,6 +148,59 @@ mod tests {
     }
 
     #[test]
+    fn pause_preserves_shield_escape_and_stage_changes_restore_the_pickup() {
+        use crate::model::{Board, Pos, Shield, Tile};
+        let mut app = App::new(42, Difficulty::Easy);
+        app.handle(Action::Start);
+        let original = playing(&app).stage.clone();
+        if let Screen::Playing(run) = &mut app.screen {
+            let mut board = Board::filled(7, 3, Tile::Wall);
+            for x in 1..6 {
+                board.set(Pos { x, y: 1 }, Tile::Floor);
+            }
+            board.set(Pos { x: 2, y: 1 }, Tile::Shield);
+            board.set(Pos { x: 3, y: 1 }, Tile::Spike);
+            board.set(Pos { x: 4, y: 1 }, Tile::Spike);
+            run.game = Game::new(board, Pos { x: 1, y: 1 });
+        }
+        app.handle(Action::Move(Direction::Right));
+        for (shield, x) in [(Shield::Armed, 2), (Shield::Breaking, 3)] {
+            app.tick();
+            assert_eq!(playing(&app).game.shield, shield);
+            app.handle(Action::Pause);
+            for _ in 0..100 {
+                app.tick();
+            }
+            assert_eq!(playing(&app).game.shield, shield);
+            assert_eq!(playing(&app).game.player, Pos { x, y: 1 });
+            app.handle(Action::Pause);
+        }
+        app.tick();
+        app.tick();
+        assert_eq!(playing(&app).game.outcome, Outcome::Playing);
+        assert_eq!(playing(&app).game.shield, Shield::Empty);
+        app.handle(Action::Retry);
+        assert_eq!(playing(&app).stage, original);
+        assert_eq!(playing(&app).game.board, original.board);
+        assert_eq!(playing(&app).game.shield, Shield::Empty);
+        if let Screen::Playing(run) = &mut app.screen {
+            run.game.shield = Shield::Armed;
+        }
+        app.handle(Action::Next);
+        assert_eq!(playing(&app).game.shield, Shield::Empty);
+        assert_eq!(
+            playing(&app)
+                .game
+                .board
+                .tiles
+                .iter()
+                .filter(|tile| **tile == Tile::Shield)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn pause_freezes_a_slide_and_retry_restores_the_original_stage() {
         let mut app = App::new(42, Difficulty::Easy);
         app.handle(Action::Start);

@@ -23,11 +23,20 @@ Each objective shows a bright `PAR` target and a dimmer `min` value. Minimum is 
 
 Entering the exit still ends the run immediately. Generation proves both objectives are possible and retries layouts whose full-clear minimum cannot be proved within the search budget. Difficulty ranges apply to the `ANY%` minimum.
 
-Finishing a stage brings up a gold `STAGE CLEAR!` panel with a brief sparkle animation and your score and slide totals. The result stays visible until you continue. Press Enter or N for the next stage, R to replay, or M for the menu, including during the animation.
+Finishing a stage brings up a gold `STAGE CLEAR!` panel with a brief sparkle
+animation, your score, slide count, and collected dot and coin totals. A table
+compares your slides against the par and exact minimum for each objective.
+Each target has its difference beside it, such as `15 (+30)` or `55 (-10)`.
+Positive means slides over the target; negative means under, and `+0` means
+matched. Matching a minimum earns `OPTIMAL`. The `100%` comparison is awarded
+only when every dot and coin was collected; otherwise its slide count is `--`
+and the result says `100% NOT COMPLETED`. The result stays visible until you
+continue. Press Enter or N for the next stage, R to replay, or M for the menu,
+including during the animation.
 
 Easy uses two 9x7 templates; normal uses four 9x7 templates, and hard uses four 11x7 templates. The start and exit are separated by at least half the interior width and height. Connections follow declared ports through the dividers between templates. Template interiors stay intact: generation rejects a layout if any floor, reward, or dynamic hazard lacks a viable route to the exit. It never carves through a challenge or fills in its inaccessible cells to make it pass verification.
 
-Every stage includes a mixed crossing with pulse and touch runs on opposing legs and fixed spikes on an island face. Normal and hard also include a touch-run switchback. Runs contain two to four adjacent hazard cells. Other templates provide recognizable transport, separate loop returns, and optional coin pockets. Variants change leg lengths, island bounds, pocket depth, and hazard run length and position while retaining the intended stopping geometry.
+Every stage includes a mixed crossing with pulse and touch runs on opposing legs and an optional fixed-spike bridge between two turns. A shield can cross that bridge; a longer loop remains playable without it. Normal and hard also include a touch-run switchback. Dynamic hazard runs contain two to four adjacent cells. Other templates provide recognizable transport, separate loop returns, and optional coin pockets. Variants change leg lengths, island bounds, pocket depth, and hazard run length and position while retaining the intended stopping geometry.
 
 | Key | Action |
 | --- | --- |
@@ -39,7 +48,7 @@ Every stage includes a mixed crossing with pulse and touch runs on opposing legs
 | M or Escape | Return to difficulty selection |
 | Q or Ctrl-C | Quit |
 
-The yellow `oo` mask is you. Dots give 1 point, `$` coins give 10, `/\` spikes kill on contact, and `<>` is the exit. The game suspends movement if the terminal becomes too small.
+The yellow `oo` mask is you. Dots give 1 point, `$` coins give 10, `/\` spikes kill on contact, and `<>` is the exit. A green `{}` pickup arms a shield automatically. The game suspends movement if the terminal becomes too small.
 
 Pulse spike walls share a four-second cycle: `==` retracted for 2.4 seconds,
 `!!` warning for 0.8 seconds, then lethal `^^` spikes for 0.8 seconds. The warning
@@ -77,6 +86,28 @@ This first template set allows safe waits between slides. It creates grouped
 crossings and repeated movement challenges; forced timed sequences across several
 turns remain planned and need additional verification of hazard timing.
 
+## Shield
+
+Every stage has one shield pickup at a safe stopping cell on a winning route,
+so it can be collected before the final exit slide. Crossing `{}` arms one charge,
+shown by a green `OO` player and `SHIELD ARMED` in the HUD. It gives no points and is
+optional for both objectives. `100%` still requires every dot and coin.
+
+An otherwise lethal hit from fixed spikes, pulse spikes, or a touch trap breaks
+the shield instead of killing you. It also protects against spikes activating
+beneath you. Safe crossings keep the charge.
+
+The breaking shield shows `**` and protects the remainder of the current slide,
+including adjacent spikes. Protection ends when you stop, so the next slide is
+unprotected. It cannot keep a stationary player alive indefinitely. Finish on
+safe floor: stopping on a fixed spike kills you on the next tick.
+
+This permits deliberate shortcuts through fixed spikes. Both exact minimums
+account for picking up and spending the shield, including its removal from the
+board. Waiting for safe dynamic crossings preserves the charge for a shortcut.
+Pause and terminal resize suspension freeze a breaking shield along with the
+slide. Retry restores the pickup; shields do not carry into the next stage.
+
 ## Replay a stage
 
 The stage seed appears above the board. To replay it:
@@ -99,7 +130,7 @@ cargo build --release --locked
 python3 scripts/terminal_smoke.py target/release/fringe
 ```
 
-The Rust tests check movement, pulse and touch-trap timing, persistent wall markings, solver edge cases, all eight template transforms, slide access from every port, connector preservation, contiguous hazard runs, par allowances, and 100 seeds at each difficulty. An independent test solver verifies the final boards, every floor cell's usability, start/exit separation, safe reward placement, and safe waiting cells, then plays every ANY% solution through the game model with waits from different cycle offsets. Full-clear tests replay complete-collection solutions through the game, check hand-calculated optima, and compare against an independent exhaustive search on small stages. Tests use light optimization to keep exact route searches practical. The Python script uses only the standard library and drives the real executable in a pseudo-terminal, including both spike types, their adjacent wall markings and pause/resize freezing, each objective's par and minimum, winning a stage, replay, quit, and terminal restoration. CI runs these checks on Linux and macOS.
+The Rust tests check movement, pulse and touch-trap timing, shield pickup and damage, persistent wall markings, solver edge cases, all eight template transforms, slide access from every port, connector preservation, contiguous hazard runs, par allowances, and 100 seeds at each difficulty. An independent test solver tracks shield inventory and verifies the final boards, every floor cell's usability, start/exit separation, safe reward placement, and safe waiting cells, then plays every ANY% solution through the game model with waits from different cycle offsets. Full-clear tests replay complete-collection solutions through the game, check hand-calculated optima, and compare against independent exhaustive searches on small stages. Both shield-aware minimums are also compared with exhaustive game simulation on 100 small boards. Tests use light optimization to keep exact route searches practical. The Python script uses only the standard library and drives the real executable in a pseudo-terminal, including shield pickup and damage, both spike types, their adjacent wall markings and pause/resize freezing, each objective's par and minimum, winning a stage, replay, quit, and terminal restoration. CI runs these checks on Linux and macOS.
 
 ## Code
 

@@ -85,7 +85,7 @@ class Screen:
         return tuple(tuple(line[left + 2*x:left + 2*x + 2] for x in range(width)) for line in lines[top:bottom + 1])
 
     def board(self):
-        tokens = {"██": "#", "  ": " ", ". ": " ", "$ ": " ", "/\\": "^", "==": "T", "[]": "C", "!!": "T", "^^": "T", "<>": "E", "oo": "S"}
+        tokens = {"██": "#", "  ": " ", ". ": " ", "$ ": " ", "{}": "B", "/\\": "^", "==": "T", "[]": "C", "!!": "T", "^^": "T", "<>": "E", "oo": "S", "OO": "S", "**": "S"}
         return tuple("".join("#" if any(c in "▏▕▔▁" for c in token) else tokens[token] for token in row) for row in self.board_tokens())
 
 
@@ -156,31 +156,44 @@ class Game:
         os.close(self.slave)
 
 
-def solution(board, touch=False):
+def solution(board, goal="exit", shield=0):
     start = next((x, y) for y, row in enumerate(board) for x, cell in enumerate(row) if cell == "S")
-    queue = collections.deque([(start, [])])
-    visited = {start}
+    queue = collections.deque([((*start, shield), [])])
+    visited = {(*start, shield)}
     while queue:
-        (x, y), path = queue.popleft()
+        (x, y, inventory), path = queue.popleft()
         for key, dx, dy in [("w", 0, -1), ("d", 1, 0), ("s", 0, 1), ("a", -1, 0)]:
             nx, ny = x, y
+            charge = inventory
+            protected = False
             touched = False
+            pulse_hit = False
             while board[ny + dy][nx + dx] != "#":
                 nx, ny = nx + dx, ny + dy
+                if board[ny][nx] == "B" and charge == 0:
+                    charge = 1
+                if goal == "pulse" and board[ny][nx] == "T" and charge == 1:
+                    pulse_hit = True
                 if board[ny][nx] == "^":
-                    break
+                    if charge == 1:
+                        charge, protected = 2, True
+                    elif not protected:
+                        break
                 touched |= board[ny][nx] == "C"
                 if board[ny][nx] == "E":
-                    if touch:
+                    if goal != "exit":
                         break
                     return path + [(key, (nx, ny))]
             else:
-                if touch and touched:
+                if (nx, ny) == (x, y) or board[ny][nx] == "^":
+                    continue
+                if ((goal == "touch" and touched) or (goal == "shield" and charge == 1)
+                        or (goal == "pulse" and pulse_hit)):
                     return path + [(key, (nx, ny))]
-                if (nx, ny) not in visited:
-                    visited.add((nx, ny))
-                    queue.append(((nx, ny), path + [(key, (nx, ny))]))
-    raise AssertionError("screen maze has no safe touch approach" if touch else "screen maze has no safe solution")
+                if (nx, ny, charge) not in visited:
+                    visited.add((nx, ny, charge))
+                    queue.append(((nx, ny, charge), path + [(key, (nx, ny))]))
+    raise AssertionError(f"screen maze has no safe {goal} route")
 
 
 def touch_positions(board):
@@ -251,6 +264,9 @@ def main():
         initial = game.screen.board()
         assert any("T" in row for row in initial), "stage must contain a timed wall"
         assert any("C" in row for row in initial), "stage must contain a touch trap"
+        assert sum(row.count("B") for row in initial) == 1, "stage needs one shield pickup"
+        assert "SHIELD --" in game.screen.text()
+        assert "{}shield" in game.screen.text(), "shield legend must fit at 80x24"
         assert_wall_marks(game.screen, initial)
         assert any_minimum == len(solution(initial)), "HUD minimum must match the actual shortest route"
         game.wait_for(lambda s: "PULSE !! WARNING" in s.text())
@@ -274,7 +290,41 @@ def main():
         assert "PULSE !! WARNING" in game.screen.text(), "resize suspension advanced hazards"
         assert_wall_marks(game.screen, initial)
 
-        for key, (x, y) in solution(initial, touch=True):
+        for key, (x, y) in solution(initial, goal="shield"):
+            ready_for_slide(game, initial)
+            game.send(key)
+            game.wait_for(lambda s: s.board()[y][x] == "S")
+        assert "SHIELD ARMED" in game.screen.text(), "pickup must arm automatically"
+        assert "{}" not in "".join("".join(row) for row in game.screen.board_tokens())
+        assert any("OO" in row for row in game.screen.board_tokens()), "armed player needs a distinct shape"
+        game.send("p")
+        game.wait_for(lambda s: "PAUSED" in s.text())
+        armed_board = game.screen.board()
+        game.read_for(0.3)
+        assert "SHIELD ARMED" in game.screen.text() and game.screen.board() == armed_board
+        game.set_size(40, 12)
+        game.wait_for(lambda s: "Simulation suspended" in s.text())
+        game.read_for(0.3)
+        game.set_size(80, 24)
+        game.wait_for(lambda s: "PAUSED" in s.text())
+        assert "SHIELD ARMED" in game.screen.text() and game.screen.board() == armed_board
+        game.send("p")
+        game.wait_for(lambda s: "PAUSED" not in s.text())
+        ready_for_slide(game, initial)
+        hit_path = solution(game.screen.board(), goal="pulse", shield=1)
+        for index, (key, (x, y)) in enumerate(hit_path):
+            ready_for_slide(game, initial)
+            if index == len(hit_path) - 1:
+                game.wait_for(lambda s: "PULSE ^^ ACTIVE" in s.text())
+            game.send(key)
+            game.wait_for(lambda s: s.board()[y][x] == "S")
+        assert "SHIELD --" in game.screen.text(), "lethal crossing must spend the charge"
+        assert "SPIKED!" not in game.screen.text(), "shield must save the player"
+        game.send("r")
+        game.wait_for(lambda s: "SLIDES 0" in s.text())
+        assert game.screen.board() == initial and "SHIELD --" in game.screen.text()
+
+        for key, (x, y) in solution(initial, goal="touch"):
             ready_for_slide(game, initial)
             game.send(key)
             game.wait_for(lambda s: s.board()[y][x] == "S")
@@ -304,10 +354,35 @@ def main():
 
         clear_stage(game, initial)
         rows = game.screen.text().splitlines()
-        assert "STAGE CLEAR!" in rows[10], "win title must be prominent in the maze area"
-        assert "╔" in rows[7] and "╚" in rows[17], "win panel must fit the minimum terminal"
-        assert "Enter / N  next stage" in rows[14] and "R replay" in rows[15]
-        result = re.search(r"SCORE (\d+)\s+SLIDES (\d+)", rows[12]).groups()
+        assert "STAGE CLEAR!" in rows[6], "win title must be prominent in the maze area"
+        assert "╔" in rows[4] and "╚" in rows[20], "win panel must fit the minimum terminal"
+        assert "Enter / N  next stage" in rows[17] and "R replay" in rows[18]
+        result = re.search(r"SCORE (\d+)\s+SLIDES (\d+)", rows[8]).groups()
+        slides = int(result[1])
+        assert slides == any_minimum
+        assert rows[11].strip(" ║").split() == ["GOAL", "SLIDES", "PAR", "MIN"]
+        assert "+ over target, - under target" in rows[14]
+
+        def comparison(actual, target):
+            return [str(target), f"({actual - target:+d})"]
+
+        any_row = rows[12].strip(" ║").split()
+        assert any_row == ["ANY%", str(slides), *comparison(slides, any_par),
+                           *comparison(slides, any_minimum)], any_row
+        collected = re.search(r"DOTS (\d+)/(\d+)\s+COINS (\d+)/(\d+)", rows[9])
+        assert collected, "collection totals must fit inside the result panel"
+        dots, all_dots, coins, all_coins = map(int, collected.groups())
+        complete = dots == all_dots and coins == all_coins
+        full_row = rows[13].strip(" ║").split()
+        if complete:
+            assert full_row == ["100%", str(slides), *comparison(slides, full_par),
+                                *comparison(slides, full_minimum)], full_row
+            assert "100% COMPLETE" in rows[15]
+        else:
+            assert full_row == ["100%", "--", str(full_par), str(full_minimum)], full_row
+            assert "100% NOT COMPLETED" in rows[15]
+        assert "OPTIMAL" in rows[15], "matching a minimum should still earn recognition"
+        result_rows = rows[8:19]
         first_frame = game.screen.text()
         game.wait_for(lambda s: s.text() != first_frame, timeout=1)
         assert "STAGE CLEAR!" in game.screen.text(), "sparkles must keep the result visible"
@@ -316,7 +391,7 @@ def main():
         while time.monotonic() < deadline:
             game.read()
         settled = game.screen.text()
-        assert re.search(r"SCORE (\d+)\s+SLIDES (\d+)", settled.splitlines()[12]).groups() == result
+        assert settled.splitlines()[8:19] == result_rows, "celebration changed performance results"
         assert "STAGE CLEAR!" in settled and "PAUSED" not in settled
         output_size = len(game.raw)
         game.read(0.2)
@@ -325,9 +400,10 @@ def main():
         game.wait_for(lambda s: "Simulation suspended" in s.text())
         game.set_size(100, 30)
         game.wait_for(lambda s: "STAGE CLEAR!" in s.text())
-        assert "STAGE CLEAR!" in game.screen.text().splitlines()[13]
+        assert "STAGE CLEAR!" in game.screen.text().splitlines()[9]
         game.set_size(80, 24)
         game.wait_for(lambda s: "STAGE CLEAR!" in s.text())
+        assert game.screen.text().splitlines()[8:19] == result_rows, "resize changed performance results"
         game.send("r")
         game.wait_for(lambda s: "SLIDES 0" in s.text())
         assert game.screen.board() == initial, "retry changed the seeded maze"
@@ -335,6 +411,7 @@ def main():
         game.send("\r")
         game.wait_for(lambda s: "SEED 43" in s.text())
         assert "STAGE CLEAR!" not in game.screen.text(), "Enter must dismiss the animation immediately"
+        assert "SHIELD --" in game.screen.text(), "new stages must start without a shield"
         assert game.screen.board() != initial
         game.send("n")
         game.wait_for(lambda s: "SEED 44" in s.text())
@@ -353,7 +430,7 @@ def main():
         game.close("\x03")
     finally:
         game.dispose()
-    print("PTY acceptance passed: pulse spikes, touch traps, distinct wall mountings, hazard pause/resize freeze, exact slide minimum, menu, difficulty, win celebration, replay, next seed, Q, Ctrl-C, cleanup, CLI errors")
+    print("PTY acceptance passed: shield pickup/damage/reset and pause/resize, pulse spikes, touch traps, distinct wall mountings, hazard pause/resize freeze, exact slide minimum, menu, difficulty, win celebration, replay, next seed, Q, Ctrl-C, cleanup, CLI errors")
 
 
 if __name__ == "__main__":

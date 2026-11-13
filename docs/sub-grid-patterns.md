@@ -109,6 +109,12 @@ timed corner relay. No original-game timing measurements are claimed.
 See [the implementation plan](superpowers/plans/2026-11-13-sub-grid-templates.md)
 and [current feature status](planned-features.md#sub-grid-templates).
 
+The shield implementation updates the mixed crossing with two offset turns and
+an optional fixed-spike bridge between them. Its outer loop remains traversable
+without a shield, with pulse and touch runs on opposing legs. The generator
+rechecks the final pickup-bearing board and computes both minimums with shield
+inventory in the slide graph. See the [shield rules](superpowers/specs/2026-11-13-shield-design.md).
+
 [m1]: https://static.wikia.nocookie.net/tomb-of-the-mask/images/5/58/Stage_1.png/revision/latest?cb=20240113170711
 [m5]: https://static.wikia.nocookie.net/tomb-of-the-mask/images/b/b8/Stage_5.png/revision/latest?cb=20240113220244
 [m14]: https://static.wikia.nocookie.net/tomb-of-the-mask/images/1/1b/Stage_14.png/revision/latest?cb=20240114120433

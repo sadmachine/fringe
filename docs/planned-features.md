@@ -6,7 +6,7 @@ Track upcoming work here. Unchecked features are planned, not implemented.
 
 1. [x] [Timed spike walls](#better-hazards). Done 2026-11-12.
 2. [x] [Initial sub-grid templates](#sub-grid-templates). Done 2026-11-13.
-3. [ ] [Shield powerup](#powerups).
+3. [x] [Shield powerup](#powerups). Done 2026-11-13.
 4. [ ] [Endless mode](#endless-mode).
 5. [ ] [Moving enemies](#better-hazards).
 
@@ -25,7 +25,8 @@ stage-clear celebration. These changes are merged into `main`.
 
 Pulse spike walls and touch traps are implemented with visible warnings,
 distinct adjacent wall markings, pause and resize freezing, and safe placement
-that preserves exact slide minimums. Shield is next.
+that preserves exact slide minimums. Shield pickups and inventory-aware exact
+minimums are implemented. Endless mode is next.
 
 The initial sub-grid template set is implemented with declared ports, preserved
 interiors, rotations/reflections, and contiguous hazard runs. See the
@@ -57,7 +58,7 @@ completed initial set.
 - [ ] Define how score carries between stages.
 - [ ] Define how death ends a run and how restarting works.
 
-Endless mode follows the shield powerup in the implementation order. Progression,
+Endless mode is next in the implementation order. Progression,
 scoring, and death rules still need design before implementation.
 
 ## Fixed campaign
@@ -104,20 +105,33 @@ and effect on stage verification and minimums still need design.
 
 ## Powerups
 
-- [ ] Add powerups, starting with a small set of familiar arcade effects inspired
-  by Tomb of the Mask and similar games.
+- [x] Add the first powerup, a shield inspired by Tomb of the Mask and similar games.
 
-Proposed starter set:
+Powerups:
 
-- Shield: absorb one otherwise lethal hazard hit.
+- [x] Shield: absorb one otherwise lethal hazard hit, with escape protection
+  through the current slide. Done 2026-11-13.
 - Magnet: collect nearby dots and coins without crossing their cells.
 - Invincibility: ignore hazard damage for a short time.
 - Freeze: temporarily stop moving enemies and dynamic hazards.
 
-Implement shield first, after timed spike walls and before endless mode. The
-other powerups remain proposals without a set implementation order.
+Every stage now has one automatic shield pickup (`{}`) at a safe stopping cell
+on a winning route, before the final exit slide. It arms one charge
+without awarding points and is optional for ANY% and 100%. Fixed spikes,
+active pulse spikes, and active touch traps break the shield on lethal contact,
+including activation underneath the player. Safe crossings retain it.
 
-The starter set is a proposal. Durations, pickup placement, stacking, and the
-distinction between shield and invincibility still need design. Define how
-powerups affect stage verification and exact ANY% and 100% minimums, and how
-freeze interacts with hazard timing, before implementation.
+The armed player is green `OO`; a breaking shield shows `**` and protects the
+remainder of that slide. Protection ends at a stop and cannot carry into another
+slide. Ending on fixed spikes remains fatal on the next tick. Retry restores
+the pickup and empty shield, and new stages start without a charge. Pause and
+resize suspension freeze shield progress with movement.
+
+The stage solver tracks pickup availability, armed shields, and spent shields,
+allowing fixed-spike shortcuts while preserving exact ANY% and 100% minimums.
+Final boards are reverified after pickup placement, including safe waiting
+cells and full collection of dots and coins.
+
+The other powerups remain proposals without a set implementation order. Their
+durations, placement, stacking, effects on stage verification and minimums, and
+freeze's interaction with hazard timing still need design.

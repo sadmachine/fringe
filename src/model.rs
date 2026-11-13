@@ -10,6 +10,7 @@ pub enum Tile {
     Floor,
     Dot,
     Coin,
+    Shield,
     Spike,
     TimedSpike,
     TouchTrap,
@@ -105,6 +106,27 @@ pub enum Outcome {
     Cleared,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shield {
+    Empty,
+    Armed,
+    // A consumed charge protects the remainder of the current slide.
+    Breaking,
+}
+
+impl Shield {
+    pub(crate) fn absorb(&mut self) -> bool {
+        match self {
+            Self::Empty => false,
+            Self::Armed => {
+                *self = Self::Breaking;
+                true
+            }
+            Self::Breaking => true,
+        }
+    }
+}
+
 struct TouchTrap {
     pos: Pos,
     // None is ready; contact starts a countdown that later contacts cannot reset.
@@ -128,6 +150,7 @@ pub struct Game {
     pub outcome: Outcome,
     pub score: u32,
     pub slides: u32,
+    pub shield: Shield,
     hazard_tick: u16,
     touch_traps: Vec<TouchTrap>,
 }
@@ -155,6 +178,7 @@ impl Game {
             outcome: Outcome::Playing,
             score: 0,
             slides: 0,
+            shield: Shield::Empty,
             hazard_tick: 0,
             touch_traps,
         }
@@ -190,6 +214,20 @@ impl Game {
             self.slides += 1;
         }
     }
+    fn damage(&mut self) {
+        if !self.shield.absorb() {
+            self.outcome = Outcome::Died;
+            self.direction = None;
+        }
+    }
+    fn end_protection(&mut self) -> bool {
+        if self.shield == Shield::Breaking {
+            self.shield = Shield::Empty;
+            true
+        } else {
+            false
+        }
+    }
     /// Advance movement and hazards together, reporting whether the view changed.
     pub fn tick(&mut self) -> bool {
         if self.outcome != Outcome::Playing {
@@ -207,19 +245,21 @@ impl Game {
         }
         // Activation happens before movement, including while standing still.
         if self.spike_phase_at(self.player) == SpikePhase::Active {
-            self.outcome = Outcome::Died;
-            self.direction = None;
-            return true;
+            self.damage();
+            changed = true;
+            if self.outcome == Outcome::Died {
+                return true;
+            }
         }
         let Some(direction) = self.direction else {
-            return changed;
+            return self.end_protection() || changed;
         };
         match self.board.step(self.player, direction) {
             Step::Blocked => {
                 self.direction = None;
-                return changed;
+                return self.end_protection() || changed;
             }
-            Step::Moved(pos) => {
+            Step::Moved(pos) | Step::Died(pos) => {
                 self.player = pos;
                 let tile = self.board.get(pos);
                 self.score += match tile {
@@ -227,7 +267,10 @@ impl Game {
                     Tile::Coin => 10,
                     _ => 0,
                 };
-                if matches!(tile, Tile::Dot | Tile::Coin) {
+                if tile == Tile::Shield {
+                    self.shield = Shield::Armed;
+                }
+                if matches!(tile, Tile::Dot | Tile::Coin | Tile::Shield) {
                     self.board.set(pos, Tile::Floor);
                 }
                 if tile == Tile::TouchTrap {
@@ -239,12 +282,8 @@ impl Game {
                         .get_or_insert(0);
                 }
                 if self.spike_phase_at(pos) == SpikePhase::Active {
-                    self.outcome = Outcome::Died;
+                    self.damage();
                 }
-            }
-            Step::Died(pos) => {
-                self.player = pos;
-                self.outcome = Outcome::Died;
             }
             Step::Cleared(pos) => {
                 self.player = pos;
@@ -255,6 +294,7 @@ impl Game {
             || self.board.step(self.player, direction) == Step::Blocked
         {
             self.direction = None;
+            self.end_protection();
         }
         true
     }
@@ -270,6 +310,128 @@ mod tests {
             board.set(Pos { x: x + 1, y: 1 }, *tile);
         }
         Game::new(board, Pos { x: 1, y: 1 })
+    }
+
+    #[test]
+    fn shield_pickup_arms_once_without_score_or_stopping_the_slide() {
+        let mut game = corridor(&[Tile::Floor, Tile::Shield, Tile::Coin]);
+        game.launch(Direction::Right);
+        game.tick();
+        assert_eq!(game.shield, Shield::Armed);
+        assert_eq!(game.score, 0);
+        assert_eq!(game.direction, Some(Direction::Right));
+        assert_eq!(game.board.get(Pos { x: 2, y: 1 }), Tile::Floor);
+        game.tick();
+        assert_eq!(game.score, 10);
+        game.shield = Shield::Empty;
+        game.launch(Direction::Left);
+        game.tick();
+        game.tick();
+        assert_eq!(game.shield, Shield::Empty, "pickup cannot respawn");
+    }
+
+    #[test]
+    fn shield_covers_a_fixed_spike_run_but_not_the_return_slide() {
+        let mut game = corridor(&[
+            Tile::Floor,
+            Tile::Shield,
+            Tile::Spike,
+            Tile::Spike,
+            Tile::Floor,
+        ]);
+        game.launch(Direction::Right);
+        game.tick();
+        game.tick();
+        assert_eq!(game.shield, Shield::Breaking);
+        assert_eq!(game.outcome, Outcome::Playing);
+        game.tick();
+        game.tick();
+        assert_eq!(game.shield, Shield::Empty);
+        assert_eq!(game.direction, None);
+        assert_eq!(game.player.x, 5);
+        assert_eq!(game.board.get(Pos { x: 3, y: 1 }), Tile::Spike);
+        game.launch(Direction::Left);
+        game.tick();
+        assert_eq!(game.outcome, Outcome::Died);
+        assert_eq!(game.player.x, 4);
+    }
+
+    #[test]
+    fn safe_dynamic_crossings_keep_the_shield_and_active_runs_consume_it() {
+        for hazard in [Tile::TimedSpike, Tile::TouchTrap] {
+            for active in [false, true] {
+                let mut game = corridor(&[Tile::Floor, Tile::Shield, hazard, hazard, Tile::Floor]);
+                if active {
+                    game.hazard_tick = 80;
+                    for trap in &mut game.touch_traps {
+                        trap.age = Some(TOUCH_DELAY_TICKS);
+                    }
+                }
+                game.launch(Direction::Right);
+                for _ in 0..4 {
+                    game.tick();
+                }
+                assert_eq!(game.outcome, Outcome::Playing, "{hazard:?} {active}");
+                assert_eq!(game.player.x, 5);
+                assert_eq!(
+                    game.shield,
+                    if active { Shield::Empty } else { Shield::Armed }
+                );
+                assert_eq!(game.board.get(Pos { x: 3, y: 1 }), hazard);
+            }
+        }
+    }
+
+    #[test]
+    fn shield_absorbs_activation_before_movement_and_protects_the_destination() {
+        for hazard in [Tile::TimedSpike, Tile::TouchTrap] {
+            let mut game = corridor(&[Tile::Floor, Tile::Shield, hazard, Tile::Spike, Tile::Floor]);
+            game.launch(Direction::Right);
+            game.tick();
+            game.tick();
+            game.hazard_tick = 79;
+            for trap in &mut game.touch_traps {
+                trap.age = Some(TOUCH_DELAY_TICKS - 1);
+            }
+            game.tick();
+            assert_eq!(game.outcome, Outcome::Playing);
+            assert_eq!(game.player.x, 4);
+            assert_eq!(game.shield, Shield::Breaking);
+            game.tick();
+            assert_eq!(game.player.x, 5);
+            assert_eq!(game.shield, Shield::Empty);
+        }
+    }
+
+    #[test]
+    fn shield_cannot_protect_a_stationary_player_indefinitely() {
+        let mut game = corridor(&[Tile::Floor, Tile::Shield, Tile::Spike]);
+        game.launch(Direction::Right);
+        game.tick();
+        game.tick();
+        assert_eq!(game.outcome, Outcome::Playing);
+        assert_eq!(game.shield, Shield::Empty);
+        assert_eq!(game.direction, None);
+        game.tick();
+        assert_eq!(game.outcome, Outcome::Died);
+    }
+
+    #[test]
+    fn shield_shortcut_can_clear_in_transit() {
+        let mut game = corridor(&[
+            Tile::Floor,
+            Tile::Shield,
+            Tile::Spike,
+            Tile::Spike,
+            Tile::Exit,
+        ]);
+        game.launch(Direction::Right);
+        for _ in 0..4 {
+            game.tick();
+        }
+        assert_eq!(game.outcome, Outcome::Cleared);
+        assert_eq!(game.slides, 1);
+        assert_eq!(game.shield, Shield::Empty);
     }
 
     #[test]

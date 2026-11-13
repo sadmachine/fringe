@@ -30,14 +30,44 @@ fn hazards_form_contiguous_challenge_runs_instead_of_isolated_cells() {
 }
 
 // Independent cell walker: deliberately does not call Board::step or the generator's solver.
-fn slide(board: &Board, from: Pos, direction: Direction) -> Option<(Pos, Vec<Pos>, bool)> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Inventory {
+    Uncollected,
+    Armed,
+    Spent,
+}
+
+type State = (Pos, Inventory);
+
+#[test]
+fn shield_can_be_collected_before_the_final_exit_slide() {
+    let stage = generate(42, Difficulty::Easy).unwrap();
+    let start = (stage.start, Inventory::Uncollected);
+    let mut queue = VecDeque::from([start]);
+    let mut seen = HashSet::from([start]);
+    let mut armed = false;
+    while let Some(state) = queue.pop_front() {
+        for direction in Direction::ALL {
+            if let Some((to, _, false)) = slide(&stage.board, state, direction) {
+                armed |= to.1 == Inventory::Armed;
+                if seen.insert(to) {
+                    queue.push_back(to);
+                }
+            }
+        }
+    }
+    assert!(armed, "pickup should be usable before the stage ends");
+}
+
+fn slide(board: &Board, from: State, direction: Direction) -> Option<(State, Vec<Pos>, bool)> {
     let (dx, dy) = match direction {
         Direction::Up => (0, -1),
         Direction::Right => (1, 0),
         Direction::Down => (0, 1),
         Direction::Left => (-1, 0),
     };
-    let mut pos = from;
+    let (mut pos, mut inventory) = from;
+    let mut protected = false;
     let mut cells = Vec::new();
     loop {
         let x = pos.x as isize + dx;
@@ -51,25 +81,35 @@ fn slide(board: &Board, from: Pos, direction: Direction) -> Option<(Pos, Vec<Pos
         };
         match board.get(next) {
             Tile::Wall => break,
-            Tile::Spike => return None,
             Tile::Exit => {
                 cells.push(next);
-                return Some((next, cells, true));
+                return Some(((next, inventory), cells, true));
             }
             _ => {
+                if board.get(next) == Tile::Shield && inventory == Inventory::Uncollected {
+                    inventory = Inventory::Armed;
+                }
+                if board.get(next) == Tile::Spike && !protected {
+                    if inventory != Inventory::Armed {
+                        return None;
+                    }
+                    inventory = Inventory::Spent;
+                    protected = true;
+                }
                 pos = next;
                 cells.push(pos);
             }
         }
     }
-    if cells.is_empty() {
+    if cells.is_empty() || board.get(pos) == Tile::Spike {
         None
     } else {
-        Some((pos, cells, false))
+        Some(((pos, inventory), cells, false))
     }
 }
 
 fn verify(board: &Board, start: Pos) -> (Vec<Direction>, HashSet<Pos>) {
+    let start = (start, Inventory::Uncollected);
     let mut paths = HashMap::from([(start, Vec::new())]);
     let mut queue = VecDeque::from([start]);
     let mut edges = Vec::new();
@@ -83,7 +123,10 @@ fn verify(board: &Board, start: Pos) -> (Vec<Direction>, HashSet<Pos>) {
                     "every slide fits in both hazards' safe windows"
                 );
                 assert!(
-                    !matches!(board.get(end), Tile::TimedSpike | Tile::TouchTrap),
+                    !matches!(
+                        board.get(end.0),
+                        Tile::TimedSpike | Tile::TouchTrap | Tile::Spike
+                    ),
                     "waiting must be safe"
                 );
                 if won {
@@ -141,8 +184,9 @@ fn full_clear_minimum_matches_an_independent_search_on_small_stages() {
             "oracle fixture must fit its simple cell mask"
         );
         let target = (1u64 << rewards.len()) - 1;
-        let mut queue = VecDeque::from([(stage.start, 0u64, 0)]);
-        let mut visited = HashSet::from([(stage.start, 0u64)]);
+        let start = (stage.start, Inventory::Uncollected);
+        let mut queue = VecDeque::from([(start, 0u64, 0)]);
+        let mut visited = HashSet::from([(start, 0u64)]);
         let mut minimum = None;
         while let Some((pos, collected, slides)) = queue.pop_front() {
             for direction in Direction::ALL {
@@ -188,6 +232,14 @@ fn seeded_stages_are_solvable_reproducible_and_fit_the_terminal() {
             let board = &stage.board;
             assert!(board.width * 2 + 4 <= 80 && board.height + 7 <= 24);
             assert_eq!(board.get(stage.start), Tile::Floor);
+            assert_eq!(
+                board
+                    .tiles
+                    .iter()
+                    .filter(|tile| **tile == Tile::Shield)
+                    .count(),
+                1
+            );
             let mut exits = 0;
             let mut rewards = 0;
             let timed_spikes = board
@@ -221,7 +273,7 @@ fn seeded_stages_are_solvable_reproducible_and_fit_the_terminal() {
                     if tile == Tile::Exit {
                         exits += 1;
                     }
-                    if matches!(tile, Tile::Dot | Tile::Coin) {
+                    if matches!(tile, Tile::Dot | Tile::Coin | Tile::Shield) {
                         assert!(safe.contains(&pos), "unsafe reward {pos:?}");
                         rewards += 1;
                     }
@@ -280,6 +332,7 @@ fn stages_use_the_assembled_map_and_separate_start_from_exit() {
                         Tile::Floor
                         | Tile::Dot
                         | Tile::Coin
+                        | Tile::Shield
                         | Tile::TimedSpike
                         | Tile::TouchTrap
                             if pos != stage.start && !safe.contains(&pos) =>
